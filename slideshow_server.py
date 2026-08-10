@@ -21,7 +21,7 @@ import threading
 
 from flask import Flask, send_file, abort
 
-SLIDESHOW_DIR = Path(__file__).resolve().parent / "slideshow"
+SLIDESHOW_DIR = Path(__file__).resolve().parent / "pic_aaf"
 ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".bmp"}
 
 app = Flask(__name__)
