@@ -10,7 +10,24 @@ Repka Pi Lab Hub — центральный веб-сервис лаборато
 Слушает 0.0.0.0:5000. Если в папке certs/ лежат cert.pem и key.pem —
 поднимается по HTTPS (обязательно для getDisplayMedia/getUserMedia в браузере
 сотрудника, см. README.md).
+
+Примечание про шум в логах: в сетях с периодическими сканерами/ботами
+(например, в сети университета) возможны единичные трассировки вида
+"SSLError: [SSL: SSLV3_ALERT_CERTIFICATE_UNKNOWN]" — это безобидно, клиент
+просто отклоняет самоподписанный сертификат без взаимодействия с
+пользователем. Ниже такие трассировки приглушаются через
+hub_exceptions(False), чтобы не засорять логи; реальные ошибки приложения
+это не затрагивает.
 """
+import eventlet
+eventlet.monkey_patch()
+
+import eventlet.debug
+# Отключаем вывод в консоль трассировок для оборванных соединений в hub'е
+# eventlet (включая типичные SSLError от сканеров сети, отклоняющих
+# самоподписанный сертификат). Сам сервер при этом продолжает работать.
+eventlet.debug.hub_exceptions(False)
+
 import json
 import os
 from pathlib import Path
@@ -140,7 +157,7 @@ if __name__ == "__main__":
         ssl_args = {"certfile": str(cert_path), "keyfile": str(key_path)}
     else:
         print("ВНИМАНИЕ: certs/cert.pem и certs/key.pem не найдены — сервер запущен по HTTP. "
-              "getDisplayMedia/getUserMedia в браузере сотрудника работать НЕ будут. "
+              "getDisplayMedia/getUserMedia в браузере сотрудника работать НЕ будет. "
               "См. README.md, раздел про self-signed сертификат.")
 
     socketio.run(app, host="0.0.0.0", port=5000, **ssl_args)
