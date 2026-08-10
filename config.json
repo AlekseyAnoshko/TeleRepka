@@ -1,0 +1,7 @@
+{
+  "sensor_poll_interval_sec": 5,
+  "photoframe_poll_interval_sec": 30,
+  "photoframes": [
+    { "name": "Фоторамка №1", "ip": "10.42.0.101" }
+  ]
+}

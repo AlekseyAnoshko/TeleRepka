@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Трансляция на экран лаборатории</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body {
+    font-family: "Segoe UI", Roboto, Arial, sans-serif;
+    background: #0d1117; color: #c9d1d9;
+    max-width: 640px; margin: 40px auto; padding: 0 20px;
+  }
+  h1 { font-size: 22px; }
+  .card {
+    background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+    padding: 20px; margin-bottom: 16px;
+  }
+  label { display: block; margin-bottom: 6px; font-size: 14px; color: #8b949e; }
+  input[type=text] {
+    width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #30363d;
+    background: #0d1117; color: #c9d1d9; font-size: 14px; margin-bottom: 16px;
+  }
+  button {
+    padding: 10px 18px; border-radius: 8px; border: none; font-size: 14px;
+    cursor: pointer; margin-right: 8px; font-weight: 600;
+  }
+  #btn-screen { background: #238636; color: white; }
+  #btn-camera { background: #1f6feb; color: white; }
+  #btn-stop { background: #da3633; color: white; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  video { width: 100%; border-radius: 10px; margin-top: 16px; background: #000; }
+  #status { font-size: 14px; color: #8b949e; margin-top: 10px; }
+  #status.live { color: #3fb950; }
+  #status.error { color: #f85149; }
+</style>
+</head>
+<body>
+  <h1>Трансляция на экран лаборатории</h1>
+
+  <div class="card">
+    <label for="display-name">Ваше имя (отобразится на ТВ)</label>
+    <input type="text" id="display-name" placeholder="Иван Иванов">
+
+    <button id="btn-screen">Показать экран</button>
+    <button id="btn-camera">Показать камеру + звук</button>
+    <button id="btn-stop" disabled>Остановить</button>
+
+    <div id="status">Не подключено</div>
+    <video id="preview" autoplay playsinline muted></video>
+  </div>
+
+  <div class="card" style="font-size: 13px; color: #8b949e;">
+    Если браузер показывает предупреждение о безопасности сертификата —
+    это ожидаемо для внутреннего сервиса лаборатории, нажмите
+    «Дополнительно» → «Перейти на сайт». Разрешите доступ к экрану/камере
+    и микрофону, когда браузер спросит.
+  </div>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+const socket = io();
+const ICE_SERVERS = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+
+let pc = null;
+let localStream = null;
+
+const statusEl = document.getElementById("status");
+const preview = document.getElementById("preview");
+const btnScreen = document.getElementById("btn-screen");
+const btnCamera = document.getElementById("btn-camera");
+const btnStop = document.getElementById("btn-stop");
+const nameInput = document.getElementById("display-name");
+
+function setStatus(text, cls) {
+  statusEl.textContent = text;
+  statusEl.className = cls || "";
+}
+
+async function startBroadcast(getStream) {
+  const name = nameInput.value.trim() || "Сотрудник";
+  try {
+    localStream = await getStream();
+  } catch (err) {
+    setStatus("Ошибка доступа: " + err.message, "error");
+    return;
+  }
+
+  preview.srcObject = localStream;
+
+  pc = new RTCPeerConnection(ICE_SERVERS);
+  localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+
+  pc.onicecandidate = (event) => {
+    if (event.candidate) {
+      socket.emit("ice-candidate", { target_sid: "tv", candidate: event.candidate });
+    }
+  };
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === "connected") setStatus("Идёт трансляция на ТВ", "live");
+    if (["disconnected", "failed", "closed"].includes(pc.connectionState)) {
+      setStatus("Соединение прервано", "error");
+    }
+  };
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  socket.emit("broadcaster-offer", { name, sdp: offer });
+
+  btnScreen.disabled = true;
+  btnCamera.disabled = true;
+  btnStop.disabled = false;
+  setStatus("Подключение к ТВ…");
+}
+
+function stopBroadcast() {
+  if (pc) { pc.close(); pc = null; }
+  if (localStream) {
+    localStream.getTracks().forEach((t) => t.stop());
+    localStream = null;
+  }
+  preview.srcObject = null;
+  socket.emit("broadcaster-stop");
+  btnScreen.disabled = false;
+  btnCamera.disabled = false;
+  btnStop.disabled = true;
+  setStatus("Не подключено");
+}
+
+btnScreen.addEventListener("click", () => {
+  startBroadcast(() => navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }));
+});
+
+btnCamera.addEventListener("click", () => {
+  startBroadcast(() => navigator.mediaDevices.getUserMedia({ video: true, audio: true }));
+});
+
+btnStop.addEventListener("click", stopBroadcast);
+
+// Комната "tv" ответит на наш offer через socket.on("tv-answer")
+socket.on("tv-answer", async ({ sdp }) => {
+  if (pc) await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+});
+
+socket.on("ice-candidate", async ({ candidate }) => {
+  if (pc && candidate) {
+    try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); }
+    catch (e) { console.warn("ICE add error", e); }
+  }
+});
+
+window.addEventListener("beforeunload", () => {
+  if (pc) socket.emit("broadcaster-stop");
+});
+</script>
+</body>
+</html>

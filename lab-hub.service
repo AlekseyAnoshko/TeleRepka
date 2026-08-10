@@ -1,0 +1,16 @@
+[Unit]
+Description=Repka Pi Lab Hub — веб-сервис информационной панели лаборатории
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=user
+WorkingDirectory=/home/user/lab-hub
+ExecStart=/usr/bin/python3 /home/user/lab-hub/app.py
+Restart=on-failure
+RestartSec=5
+Environment=LAB_HUB_SECRET=change-me-to-a-random-value
+
+[Install]
+WantedBy=multi-user.target
