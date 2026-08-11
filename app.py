@@ -1,38 +1,41 @@
 """
 Repka Pi Lab Hub — центральный веб-сервис лаборатории.
 
-Функции:
-  - показ данных с датчиков (температура, влажность, CO2) через GPIO/UART
-  - отображение статуса подключённых фоторамок ESP32 PhotoFrame (REST API)
-  - приём видео/аудио потоков с рабочих мест сотрудников (WebRTC) и показ на ТВ
+Функции (всё на одном сайте, единый порт 127.0.0.1:5000, наружу отдаётся
+через nginx по имени telerepka-k207.istu.int — см. nginx_telerepka.conf):
+- "/"            — главная страница для ТВ (kiosk), датчики + статус рамок
+- "/broadcast"   — страница сотрудника: трансляция экрана/камеры на ТВ (WebRTC)
+- "/slideshow.jpg" — раздача следующего слайда для ESP32 PhotoFrame
+                     (раньше был отдельный процесс slideshow_server.py на
+                     порту 5001 — теперь это обычный маршрут этого же сайта)
 
 Запуск: python3 app.py
-Слушает 0.0.0.0:5000. Если в папке certs/ лежат cert.pem и key.pem —
-поднимается по HTTPS (обязательно для getDisplayMedia/getUserMedia в браузере
-сотрудника, см. README.md).
+Слушает 127.0.0.1:5000 по HTTP. TLS-терминацию и единую точку входа
+(80 и 443, домен telerepka-k207.istu.int) обеспечивает nginx перед этим
+процессом — см. nginx_telerepka.conf. Сам Flask больше не поднимает
+собственный HTTPS и не требует certs/cert.pem — это упрощает секцию
+"почему обязателен HTTPS" из README: теперь сертификат один, в nginx,
+а не по одному на каждый порт/сервис.
 
 Примечание про шум в логах: в сетях с периодическими сканерами/ботами
 (например, в сети университета) возможны единичные трассировки вида
 "SSLError: [SSL: SSLV3_ALERT_CERTIFICATE_UNKNOWN]" — это безобидно, клиент
 просто отклоняет самоподписанный сертификат без взаимодействия с
-пользователем. Ниже такие трассировки приглушаются через
-hub_exceptions(False), чтобы не засорять логи; реальные ошибки приложения
-это не затрагивает.
+пользователем. Такие трассировки приглушаются через hub_exceptions(False).
 """
 import eventlet
 eventlet.monkey_patch()
 
 import eventlet.debug
-# Отключаем вывод в консоль трассировок для оборванных соединений в hub'е
-# eventlet (включая типичные SSLError от сканеров сети, отклоняющих
-# самоподписанный сертификат). Сам сервер при этом продолжает работать.
 eventlet.debug.hub_exceptions(False)
 
+import itertools
 import json
 import os
+import threading
 from pathlib import Path
 
-from flask import Flask, render_template, request
+from flask import Flask, abort, render_template, request, send_file
 from flask_socketio import SocketIO, emit, join_room
 
 import sensors
@@ -62,8 +65,7 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("LAB_HUB_SECRET", "change-me")
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 
-
-# --- HTTP routes -------------------------------------------------------
+# --- HTTP routes: главная панель и трансляция ---------------------------
 
 @app.route("/")
 def index():
@@ -75,6 +77,46 @@ def index():
 def broadcast_page():
     """Страница сотрудника: трансляция экрана/камеры и звука на ТВ."""
     return render_template("broadcast.html")
+
+
+# --- HTTP route: слайд-шоу для ESP32 PhotoFrame --------------------------
+# Перенесено из slideshow_server.py (был отдельным процессом на порту 5001).
+# Прошивка рамки не умеет смотреть в сетевой каталог напрямую — она лишь
+# периодически скачивает один и тот же URL, указанный в image_url (см.
+# rotation_mode=url в docs/API.md репозитория esp32-photoframe). Этот
+# маршрут отдаёт на каждый запрос следующее по очереди изображение из
+# SLIDESHOW_DIR, так что каждый плановый опрос рамки сдвигает слайд вперёд.
+
+SLIDESHOW_DIR = BASE_DIR / "pic_aaf"
+ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".bmp"}
+
+_slideshow_lock = threading.Lock()
+_slideshow_cycle = None
+_slideshow_files_snapshot: list[Path] = []
+
+
+def _refresh_slideshow_cycle() -> None:
+    """Перечитывает папку и пересоздаёт бесконечный циклический итератор,
+    если состав файлов изменился (можно добавлять/удалять картинки без
+    перезапуска сервера)."""
+    global _slideshow_cycle, _slideshow_files_snapshot
+    files = sorted(
+        p for p in SLIDESHOW_DIR.iterdir()
+        if p.is_file() and p.suffix.lower() in ALLOWED_EXT
+    )
+    if files != _slideshow_files_snapshot:
+        _slideshow_files_snapshot = files
+        _slideshow_cycle = itertools.cycle(files) if files else None
+
+
+@app.route("/slideshow.jpg")
+def slideshow():
+    with _slideshow_lock:
+        _refresh_slideshow_cycle()
+        if _slideshow_cycle is None:
+            abort(404, description=f"Нет изображений в {SLIDESHOW_DIR}")
+        next_file = next(_slideshow_cycle)
+    return send_file(next_file)
 
 
 # --- Датчики: фоновый поток публикует показания всем подключённым клиентам
@@ -147,17 +189,10 @@ def broadcaster_stop():
 
 
 if __name__ == "__main__":
+    SLIDESHOW_DIR.mkdir(exist_ok=True)
     socketio.start_background_task(sensor_loop)
     socketio.start_background_task(photoframe_loop)
 
-    cert_path = BASE_DIR / "certs" / "cert.pem"
-    key_path = BASE_DIR / "certs" / "key.pem"
-    ssl_args = {}
-    if cert_path.exists() and key_path.exists():
-        ssl_args = {"certfile": str(cert_path), "keyfile": str(key_path)}
-    else:
-        print("ВНИМАНИЕ: certs/cert.pem и certs/key.pem не найдены — сервер запущен по HTTP. "
-              "getDisplayMedia/getUserMedia в браузере сотрудника работать НЕ будет. "
-              "См. README.md, раздел про self-signed сертификат.")
-
-    socketio.run(app, host="0.0.0.0", port=5000, **ssl_args)
+    # TLS теперь только в nginx (см. nginx_telerepka.conf), поэтому Flask
+    # слушает исключительно loopback — снаружи процесс недостижим напрямую.
+    socketio.run(app, host="127.0.0.1", port=5000)
