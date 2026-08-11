@@ -19,54 +19,33 @@
   html, body {
     margin: 0; padding: 0; height: 100%;
     background: var(--bg); color: var(--text);
-    font-family: "Segoe UI", Roboto, Arial, sans-serif;
+    font-family: 'Segoe UI', Roboto, Arial, sans-serif;
     overflow: hidden;
   }
   #app {
     display: grid;
     grid-template-columns: 340px 1fr;
     grid-template-rows: 72px 1fr;
-    height: 100vh;
-    gap: 12px;
-    padding: 12px;
+    height: 100vh; gap: 12px; padding: 12px;
   }
   header {
     grid-column: 1 / 3;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 20px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 12px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 12px;
   }
   header h1 { font-size: 22px; margin: 0; font-weight: 600; }
   header #clock { font-size: 28px; font-variant-numeric: tabular-nums; color: var(--accent); }
-
-  aside {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    overflow-y: auto;
-  }
+  aside { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
   .panel {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 16px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px;
   }
   .panel h2 {
-    margin: 0 0 12px 0;
-    font-size: 14px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--muted);
+    margin: 0 0 12px 0; font-size: 14px;
+    text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
   }
-  .sensor-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 10px;
-  }
+  .sensor-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
   .sensor-value { text-align: center; }
   .sensor-value .num { font-size: 30px; font-weight: 700; color: var(--accent); }
   .sensor-value .unit { font-size: 13px; color: var(--muted); }
@@ -74,8 +53,7 @@
 
   .frame-item {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 8px 0; border-bottom: 1px solid var(--border);
-    font-size: 14px;
+    padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px;
   }
   .frame-item:last-child { border-bottom: none; }
   .frame-link {
@@ -84,42 +62,30 @@
   }
   .frame-link:hover .frame-name { color: var(--accent); text-decoration: underline; }
   .frame-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; flex-shrink: 0; }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    display: inline-block; margin-right: 8px; flex-shrink: 0;
+  }
   .dot.online { background: var(--good); }
   .dot.offline { background: var(--bad); }
 
   main.stage {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 12px;
-    display: grid;
-    gap: 12px;
-    overflow: hidden;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 12px; display: grid; gap: 12px; overflow: hidden;
   }
-  #video-grid {
-    display: grid;
-    gap: 12px;
-    height: 100%;
-    grid-auto-rows: 1fr;
-  }
+  #video-grid { display: grid; gap: 12px; height: 100%; grid-auto-rows: 1fr; }
   .video-tile {
-    position: relative;
-    background: #000;
-    border-radius: 10px;
-    overflow: hidden;
-    border: 1px solid var(--border);
+    position: relative; background: #000; border-radius: 10px;
+    overflow: hidden; border: 1px solid var(--border);
   }
   .video-tile video { width: 100%; height: 100%; object-fit: contain; background: #000; }
   .video-tile .name-tag {
     position: absolute; bottom: 8px; left: 8px;
-    background: rgba(0,0,0,0.6);
-    padding: 4px 10px; border-radius: 6px;
-    font-size: 13px;
+    background: rgba(0,0,0,0.6); padding: 4px 10px; border-radius: 6px; font-size: 13px;
   }
   #placeholder {
-    display: flex; align-items: center; justify-content: center;
-    height: 100%; color: var(--muted); font-size: 18px; text-align: center;
+    display: flex; align-items: center; justify-content: center; height: 100%;
+    color: var(--muted); font-size: 18px; text-align: center;
     flex-direction: column; gap: 8px;
   }
   #placeholder .hint { font-size: 14px; color: var(--muted); }
@@ -164,19 +130,18 @@
     <div class="panel">
       <h2>Трансляция с рабочих мест</h2>
       <div style="font-size: 13px; color: var(--muted); line-height: 1.5;">
-        Чтобы показать экран или камеру на этом экране,
-        откройте со своего компьютера адрес:<br>
-        <code id="broadcast-url" style="color: var(--accent);">https://&lt;IP Repka Pi&gt;:5000/broadcast</code>
+        Чтобы показать экран или камеру на этом экране, откройте со своего компьютера адрес:
+        <br>
+        <code id="broadcast-url" style="color: var(--accent)">https://&lt;адрес сайта&gt;/broadcast</code>
       </div>
     </div>
   </aside>
 
   <main class="stage">
-    <div id="video-grid">
-      <div id="placeholder">
-        <div>Нет активных трансляций</div>
-        <div class="hint">Ожидание подключения с рабочих мест сотрудников…</div>
-      </div>
+    <div id="video-grid"></div>
+    <div id="placeholder">
+      Нет активных трансляций
+      <div class="hint">Ожидание подключения с рабочих мест сотрудников…</div>
     </div>
   </main>
 </div>
@@ -184,124 +149,112 @@
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script>
 const socket = io();
-document.getElementById("broadcast-url").textContent =
-  `${location.protocol}//${location.hostname}:${location.port}/broadcast`;
 
-// --- Часы ---
+document.getElementById('broadcast-url').textContent =
+  location.protocol + '//' + location.hostname +
+  (location.port ? ':' + location.port : '') + '/broadcast';
+
 function tick() {
-  document.getElementById("clock").textContent =
-    new Date().toLocaleTimeString("ru-RU");
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString('ru-RU');
 }
 setInterval(tick, 1000);
 tick();
 
-// --- Датчики ---
-socket.on("sensor_data", (data) => {
-  document.getElementById("s-temp").textContent =
-    data.temperature != null ? data.temperature.toFixed(1) : "—";
-  document.getElementById("s-hum").textContent =
-    data.humidity != null ? data.humidity.toFixed(0) : "—";
-  document.getElementById("s-co2").textContent =
-    data.co2 != null ? Math.round(data.co2) : "—";
+socket.on('sensor_data', data => {
+  document.getElementById('s-temp').textContent = data.temperature !== null ? data.temperature.toFixed(1) : '—';
+  document.getElementById('s-hum').textContent = data.humidity !== null ? data.humidity.toFixed(0) : '—';
+  document.getElementById('s-co2').textContent = data.co2 !== null ? Math.round(data.co2) : '—';
 });
 
-// --- Фоторамки ---
-// Каждая рамка отдаёт свой веб-интерфейс по HTTP на своём IP (порт 80).
-// Открываем в новой вкладке (target=_blank): встроить через iframe нельзя —
-// браузер блокирует это как смешанный контент (эта страница — HTTPS, а рамка — HTTP).
-socket.on("photoframe_status", (frames) => {
-  const list = document.getElementById("frame-list");
-  list.innerHTML = "";
-  frames.forEach((f) => {
-    const row = document.createElement("div");
-    row.className = "frame-item";
+// Статус фоторамок: ссылка ведёт не на прямой IP рамки в подсети хотспота
+// (10.42.0.x — она недоступна снаружи, нет маршрута), а на встроенный в
+// app.py reverse-proxy /photoframe/<имя>/, который сам сходит на рамку с
+// Repka Pi (она и есть шлюз хотспота) и отдаст её страницу через тот же
+// домен сайта. См. photoframes.py: find_ip_by_name() / proxy_request().
+socket.on('photoframe_status', frames => {
+  const list = document.getElementById('frame-list');
+  list.innerHTML = '';
+  frames.forEach(f => {
+    const row = document.createElement('div');
+    row.className = 'frame-item';
+    const proxyUrl = '/photoframe/' + encodeURIComponent(f.name) + '/';
     row.innerHTML = `
-      <a class="frame-link" href="http://${f.ip}/" target="_blank" rel="noopener" title="Открыть интерфейс рамки">
-        <span class="dot ${f.online ? "online" : "offline"}"></span>
+      <a class="frame-link" href="${proxyUrl}" target="_blank" rel="noopener" title="Открыть веб-интерфейс рамки">
+        <span class="dot ${f.online ? 'online' : 'offline'}"></span>
         <span class="frame-name">${f.name}</span>
       </a>
-      <span style="color: var(--muted); flex-shrink: 0; margin-left: 8px;">${f.ip}</span>
+      <span style="color:var(--muted);flex-shrink:0;margin-left:8px">${f.ip}</span>
     `;
     list.appendChild(row);
   });
 });
 
-// ======================= WebRTC: приём трансляций =======================
-// ТВ выступает получателем: на каждое broadcaster-offer создаётся отдельный
-// RTCPeerConnection и видео-плитка. Несколько сотрудников могут вещать
-// одновременно — у каждого своя плитка по имени и sid.
+// --- WebRTC: приём трансляций от рабочих мест сотрудников -----------------
 
-const ICE_SERVERS = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
-const peers = {}; // sid -> RTCPeerConnection
-const videoGrid = document.getElementById("video-grid");
-const placeholder = document.getElementById("placeholder");
+const ICE_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+const peers = {};
+const videoGrid = document.getElementById('video-grid');
+const placeholder = document.getElementById('placeholder');
 
 function updateGridLayout() {
   const n = Object.keys(peers).length;
   if (n === 0) {
-    placeholder.style.display = "flex";
-    videoGrid.style.gridTemplateColumns = "1fr";
+    placeholder.style.display = 'flex';
+    videoGrid.style.gridTemplateColumns = '1fr';
     return;
   }
-  placeholder.style.display = "none";
-  const cols = n <= 1 ? 1 : n <= 4 ? 2 : 3;
+  placeholder.style.display = 'none';
+  const cols = n === 1 ? 1 : (n <= 4 ? 2 : 3);
   videoGrid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
 }
 
 function addTile(sid, name) {
-  const tile = document.createElement("div");
-  tile.className = "video-tile";
-  tile.id = `tile-${sid}`;
+  const tile = document.createElement('div');
+  tile.className = 'video-tile';
+  tile.id = 'tile-' + sid;
   tile.innerHTML = `<video autoplay playsinline></video><div class="name-tag">${name}</div>`;
   videoGrid.appendChild(tile);
   updateGridLayout();
-  return tile.querySelector("video");
+  return tile.querySelector('video');
 }
 
 function removeTile(sid) {
-  const tile = document.getElementById(`tile-${sid}`);
+  const tile = document.getElementById('tile-' + sid);
   if (tile) tile.remove();
   updateGridLayout();
 }
 
-socket.emit("tv-join");
+socket.emit('tv-join');
 
-socket.on("broadcaster-offer", async ({ sid, name, sdp }) => {
+socket.on('broadcaster-offer', async ({ sid, name, sdp }) => {
   const pc = new RTCPeerConnection(ICE_SERVERS);
   peers[sid] = pc;
-
   const videoEl = addTile(sid, name);
-
-  pc.ontrack = (event) => {
-    videoEl.srcObject = event.streams[0];
-  };
-  pc.onicecandidate = (event) => {
-    if (event.candidate) {
-      socket.emit("ice-candidate", { target_sid: sid, candidate: event.candidate });
-    }
+  pc.ontrack = event => { videoEl.srcObject = event.streams[0]; };
+  pc.onicecandidate = event => {
+    if (event.candidate) socket.emit('ice-candidate', { target_sid: sid, candidate: event.candidate });
   };
   pc.onconnectionstatechange = () => {
-    if (["disconnected", "failed", "closed"].includes(pc.connectionState)) {
+    if (['disconnected', 'failed', 'closed'].includes(pc.connectionState)) {
       removeTile(sid);
       delete peers[sid];
     }
   };
-
   await pc.setRemoteDescription(new RTCSessionDescription(sdp));
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
-  socket.emit("tv-answer", { target_sid: sid, sdp: answer });
+  socket.emit('tv-answer', { target_sid: sid, sdp: answer });
 });
 
-socket.on("ice-candidate", async ({ sid, candidate }) => {
+socket.on('ice-candidate', async ({ sid, candidate }) => {
   const pc = peers[sid];
   if (pc && candidate) {
     try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); }
-    catch (e) { console.warn("ICE add error", e); }
+    catch (e) { console.warn('ICE add error', e); }
   }
 });
 
-socket.on("broadcaster-stop", ({ sid }) => {
+socket.on('broadcaster-stop', ({ sid }) => {
   if (peers[sid]) { peers[sid].close(); delete peers[sid]; }
   removeTile(sid);
 });

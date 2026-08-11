@@ -6,16 +6,23 @@ Repka Pi Lab Hub — центральный веб-сервис лаборато
 - "/"            — главная страница для ТВ (kiosk), датчики + статус рамок
 - "/broadcast"   — страница сотрудника: трансляция экрана/камеры на ТВ (WebRTC)
 - "/slideshow.jpg" — раздача следующего слайда для ESP32 PhotoFrame
-                     (раньше был отдельный процесс slideshow_server.py на
-                     порту 5001 — теперь это обычный маршрут этого же сайта)
+- "/photoframe/<name>/<path:subpath>" — reverse-proxy на веб-интерфейс
+   конкретной фоторамки (см. ниже, почему это нужно)
+
+Почему нужен reverse-proxy для рамок: сама рамка живёт в подсети Wi-Fi
+хотспота Repka Pi (10.42.0.x) — эта подсеть недоступна снаружи (из сети
+университета, с обычного Wi-Fi ноутбука сотрудника и т.п.), там просто
+нет маршрута. Раньше страница отдавала прямую ссылку вида http://10.42.0.101/,
+которая работала только для устройств, физически подключённых к хотспоту
+рамки. Теперь вместо прямой ссылки используется /photoframe/<имя>/ —
+запрос до рамки выполняет сам процесс app.py (он и есть шлюз хотспота,
+у него есть маршрут в 10.42.0.0/24), а результат отдаётся браузеру через
+уже работающий домен telerepka-k207.istu.int, куда маршрут есть у всех.
 
 Запуск: python3 app.py
 Слушает 127.0.0.1:5000 по HTTP. TLS-терминацию и единую точку входа
 (80 и 443, домен telerepka-k207.istu.int) обеспечивает nginx перед этим
-процессом — см. nginx_telerepka.conf. Сам Flask больше не поднимает
-собственный HTTPS и не требует certs/cert.pem — это упрощает секцию
-"почему обязателен HTTPS" из README: теперь сертификат один, в nginx,
-а не по одному на каждый порт/сервис.
+процессом — см. nginx_telerepka.conf.
 
 Примечание про шум в логах: в сетях с периодическими сканерами/ботами
 (например, в сети университета) возможны единичные трассировки вида
@@ -35,7 +42,7 @@ import os
 import threading
 from pathlib import Path
 
-from flask import Flask, abort, render_template, request, send_file
+from flask import Flask, Response, abort, render_template, request, send_file
 from flask_socketio import SocketIO, emit, join_room
 
 import sensors
@@ -77,6 +84,35 @@ def index():
 def broadcast_page():
     """Страница сотрудника: трансляция экрана/камеры и звука на ТВ."""
     return render_template("broadcast.html")
+
+
+# --- HTTP route: reverse-proxy на веб-интерфейс фоторамки ---------------
+# Ссылки на страницу конкретной рамки в шаблонах должны указывать сюда
+# (/photoframe/<name>/), а не на её реальный IP в подсети 10.42.0.x —
+# см. пояснение в шапке файла и в photoframes.py.
+
+@app.route("/photoframe/<name>/", defaults={"subpath": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+@app.route("/photoframe/<name>/<path:subpath>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+def photoframe_proxy(name: str, subpath: str):
+    ip = photoframes.find_ip_by_name(config["photoframes"], name)
+    if ip is None:
+        abort(404, description=f"Фоторамка с именем '{name}' не найдена в config.json")
+
+    upstream = photoframes.proxy_request(
+        ip=ip,
+        subpath=subpath,
+        method=request.method,
+        headers=dict(request.headers),
+        data=request.get_data(),
+        params=request.args,
+    )
+
+    excluded_headers = {"content-encoding", "content-length", "transfer-encoding", "connection"}
+    response_headers = [
+        (k, v) for k, v in upstream.raw.headers.items()
+        if k.lower() not in excluded_headers
+    ]
+    return Response(upstream.content, upstream.status_code, response_headers)
 
 
 # --- HTTP route: слайд-шоу для ESP32 PhotoFrame --------------------------
