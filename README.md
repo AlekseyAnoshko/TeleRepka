@@ -1,66 +1,134 @@
 # Repka Pi Lab Hub
 
 Веб-сервис информационной панели лаборатории на **Repka Pi 4**. Показывается
-на большом телевизоре по HDMI в режиме киоска и совмещает три функции:
+на большом телевизоре по HDMI в режиме киоска и совмещает четыре функции:
 
 1. **Датчики** — температура, влажность и уровень CO₂ с GPIO/UART в реальном времени.
-2. **Фоторамки** — статус подключённых устройств ESP32 PhotoFrame (см. `docs/REPKA_PI_PHOTOFRAME.md`
-   в репозитории esp32-photoframe) через их REST API.
+2. **Фоторамки** — статус подключённых устройств ESP32 PhotoFrame через их REST API,
+   плюс reverse-proxy на их веб-интерфейс (см. раздел «Сеть фоторамок» ниже).
 3. **Трансляция с рабочих мест** — любой сотрудник открывает страницу `/broadcast`
    со своего компьютера и выводит экран или камеру+звук прямо на ТВ лаборатории
    через WebRTC, без установки дополнительного ПО.
+4. **Transparent proxy для рамок** (`squid.conf`) — даёт фоторамкам, у которых нет
+   настройки HTTP-прокси в прошивке, доступ в интернет для OTA-обновлений через
+   прокси-сервер университета.
 
 Repka Pi при этом одновременно: подключена к сети университета по проводному
-Ethernet (`end0`), раздаёт Wi-Fi как хотспот для фоторамок сотрудников, и
-выводит картинку на ТВ по HDMI. Такая сетевая схема описана в
-`docs/REPKA_PI_PHOTOFRAME.md` — сервис ниже рассчитан именно на неё.
+Ethernet (`end0`), раздаёт Wi-Fi как хотспот для фоторамок сотрудников (подсеть
+`10.42.0.0/24`), и выводит картинку на ТВ по HDMI.
 
-## Архитектура
+## Единый домен вместо портов
 
+Весь сайт открывается по одному внутреннему имени —
+**`telerepka-k207.istu.int`** — вместо отдельных портов на каждый сервис.
+`app.py` слушает только `127.0.0.1:5000`, а `nginx` (см. `nginx_telerepka.conf`)
+терминирует TLS и раздаёт домен на портах 80/443:
+
+| Страница | Назначение |
+|---|---|
+| `/` | Главная панель для ТВ (kiosk): датчики, статус рамок |
+| `/broadcast` | Трансляция экрана/камеры сотрудника на ТВ (WebRTC) |
+| `/slideshow.jpg` | Слайд для ESP32 PhotoFrame (только HTTP — прошивка рамки не умеет обрабатывать HTTPS-редиректы с самоподписанным сертификатом) |
+| `/photoframe/<name>/` | Reverse-proxy на веб-интерфейс конкретной рамки |
+
+Резолвинг `telerepka-k207.istu.int`:
+- на самой Repka Pi — строка в `/etc/hosts`;
+- для устройств в хотспоте (`10.42.0.0/24`) — запись в
+  `/etc/NetworkManager/dnsmasq-shared.d/`.
+
+## Сеть фоторамок: два независимых потока трафика
+
+Важно не путать два разных направления трафика к рамке — у них разные решения.
+
+### 1. Входящий: браузер сотрудника → веб-интерфейс рамки
+
+Сама рамка живёт в подсети хотспота (`10.42.0.x`), которая недоступна снаружи —
+у обычного ноутбука или устройства из сети университета просто нет туда
+маршрута. Поэтому ссылка на карточке рамки на главной странице ведёт не на
+`http://10.42.0.101/` напрямую, а на `/photoframe/<name>/` — этот маршрут в
+`app.py` сам делает запрос к рамке (Repka Pi физически имеет доступ в
+`10.42.0.0/24`, так как она и есть шлюз хотспота) и отдаёт результат браузеру
+через уже работающий домен сайта. Логика проксирования — в `photoframes.py`
+(`find_ip_by_name()`, `proxy_request()`).
+
+### 2. Исходящий: рамка → интернет (OTA-обновления прошивки)
+
+Сеть университета блокирует прямые исходящие TCP/80/443-соединения и
+пропускает трафик наружу только через явный HTTP-прокси университета
+(`172.27.100.5:4444`). Прошивка ESP32 PhotoFrame не умеет настраиваться на
+HTTP-прокси вообще — она всегда пытается соединиться напрямую. Значит обойти
+это на стороне рамки невозможно, и трафик нужно перехватывать прозрачно на
+уровне сети, силами самой Repka Pi.
+
+Решение — **transparent proxy** на связке Squid + nftables, конфиг в
+`squid.conf`:
+
+- `http_port 3129 intercept` и `https_port 3130 intercept ssl-bump ...` —
+  Squid слушает в режиме перехвата, клиент (рамка) не знает о его
+  существовании.
+- Для HTTPS используется `ssl_bump peek/splice`, а не полноценный MITM —
+  Squid лишь подсматривает SNI из TLS-хендшейка (какой домен запрашивается),
+  но не расшифровывает и не подменяет сертификат. Это принципиально,
+  потому что прошить кастомный CA-сертификат в ESP32 нельзя.
+- `cache_peer 172.27.100.5 parent 4444 0 no-query default` — весь трафик,
+  прошедший через Squid, дальше уходит на прокси университета как на
+  «родителя последней инстанции».
+- На уровне `nftables` (настраивается отдельно, не входит в `squid.conf`)
+  добавляется `redirect` для пакетов от IP рамки на порты `3129`/`3130` —
+  без этого правила Squid просто ничего не увидит, трафик рамки пойдёт мимо
+  него напрямую и будет заблокирован сетью университета, как и раньше.
+
+Установка и nftables-правила — см. комментарии в шапке `squid.conf`.
+
+### 3. Время (NTP) — отдельная, но связанная проблема
+
+NTP работает по UDP/123, для которого нет понятия «HTTP-прокси» — сеть
+университета блокирует его так же, как и прямой TCP, но проксировать через
+Squid не получится (Squid не умеет проксировать произвольный UDP). Из-за
+этого у рамки без верного времени TLS-проверка сертификата при OTA-запросе
+может проваливаться («certificate not yet valid», раз дата упала к 1970 году).
+
+Решение — `chrony` на самой Repka Pi, синхронизирующийся с внутрикампусным
+NTP-сервером университета (`172.27.100.5`, отзывается на UDP/123 в отличие от
+внешних `pool.ntp.org` — трафик внутри кампуса не блокируется, в отличие от
+исходящего в интернет), и рамка настраивается брать время не с
+`pool.ntp.org`, а с самой Repka Pi (`10.42.0.1`) как с локального NTP-сервера
+(`PATCH /api/config`, поле `ntp_server`):
+
+```bash
+sudo apt-get install -y chrony
+# в /etc/chrony/chrony.conf:
+#   server 172.27.100.5 iburst
+#   allow 10.42.0.0/24
+sudo systemctl restart chrony
+chronyc sources -v   # ожидаем '*' у 172.27.100.5 (free.istu)
 ```
-                    ┌─────────────── Repka Pi 4 ───────────────┐
-  Ethernet (end0) → │  сеть университета                       │
-  Wi-Fi hotspot   → │  ↔ фоторамки сотрудников (ESP32)         │
-  HDMI            → │  ↔ телевизор лаборатории (Chromium kiosk)│
-                    │                                           │
-                    │  Flask + Flask-SocketIO (app.py)          │
-                    │   ├─ sensors.py     — опрос GPIO/UART      │
-                    │   ├─ photoframes.py — опрос REST API рамок │
-                    │   └─ WebRTC signaling (offer/answer/ICE)  │
-                    └───────────────────────────────────────┘
-                                     ▲
-                                     │ HTTPS + WebSocket
-                       ┌──────────────────────────────┐
-                       │  Рабочее место сотрудника   │
-                       │  открывает /broadcast        │
-                       │  (getDisplayMedia/getUserMedia)│
-                       └─────────────────────────────┘
-```
 
-Видео/аудио с рабочего места идёт к ТВ напрямую по WebRTC (peer-to-peer),
-Repka Pi выступает только сигнальным сервером — это разгружает и без того
-слабый канал Wi-Fi/Ethernet платы от постоянной трансляции медиапотока.
-
-## Почему обязателен HTTPS
+## Почему обязателен HTTPS для `/broadcast`
 
 Браузерные API `getDisplayMedia()` (захват экрана) и `getUserMedia()` (камера/
 микрофон) работают только в защищённом контексте — то есть по HTTPS, кроме
-адреса `localhost`. Поскольку сотрудники открывают страницу `/broadcast` по IP
-Repka Pi в локальной сети, а не с `localhost`, без TLS браузер заблокирует
-доступ к камере и экрану. Поэтому `app.py` поднимает сервер по HTTPS
-с самоподписанным сертификатом (см. ниже).
+адреса `localhost`. Поскольку сотрудники открывают `/broadcast` по домену сайта
+в локальной сети, а не с `localhost`, без TLS браузер заблокирует доступ к
+камере и экрану. TLS терминируется в `nginx` (см. `nginx_telerepka.conf`) с
+самоподписанным сертификатом — при первом заходе браузер один раз спросит
+подтверждение, это ожидаемо для внутреннего инструмента.
 
 ## Установка
 
-### 1. Системные зависимости
+### 1. Системные зависиимости
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y python3 python3-pip python3-venv chromium-browser
+sudo apt-get install -y python3 python3-pip python3-venv chromium-browser nginx
+```
+
+Для transparent proxy рамок:
+```bash
+sudo apt-get install -y squid-openssl   # именно openssl-вариант, нужен для ssl_bump
 ```
 
 Для реальных датчиков (замените под свою распиновку и модель CO₂-датчика):
-
 ```bash
 sudo apt-get install -y python3-dev python3-setuptools git
 git clone https://gitflic.ru/project/repka_pi/repkapigpiofs.git
@@ -70,37 +138,40 @@ cd repkapigpiofs && sudo python3 setup.py install && cd ..
 ### 2. Python-окружение
 
 ```bash
-mkdir -p ~/lab-hub && cd ~/lab-hub
-# скопируйте сюда все файлы из этого проекта: app.py, sensors.py, photoframes.py,
-# config.json, requirements.txt, templates/, static/ (если добавите свои стили)
+mkdir -p ~/git && cd ~/git
+git clone https://github.com/AlekseyAnoshko/TeleRepka.git
+cd TeleRepka
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
 
 Без установленных `adafruit-circuitpython-dht`/`mh-z19` сервис автоматически
-переходит в режим симуляции данных датчиков — удобно, чтобы сразу проверить
-веб-интерфейс, не дожидаясь физического подключения оборудования.
+переходит в режим симуляции данных датчиков.
 
-### 3. Самоподписанный TLS-сертификат
+### 3. nginx и TLS-сертификат сайта
 
 ```bash
-mkdir -p ~/lab-hub/certs
-openssl req -x509 -newkey rsa:2048 -nodes \
-  -keyout ~/lab-hub/certs/key.pem \
-  -out ~/lab-hub/certs/cert.pem \
-  -days 3650 \
-  -subj "/CN=repka-pi4.local"
+sudo mkdir -p /etc/nginx/certs
+sudo openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout /etc/nginx/certs/telerepka.key \
+  -out /etc/nginx/certs/telerepka.crt \
+  -days 3650 -subj "/CN=telerepka-k207.istu.int"
+
+sudo cp nginx_telerepka.conf /etc/nginx/sites-available/telerepka
+sudo ln -sf /etc/nginx/sites-available/telerepka /etc/nginx/sites-enabled/telerepka
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
-При первом заходе на `/broadcast` браузер сотрудника покажет предупреждение
-о недоверенном сертификате — это ожидаемо для внутреннего инструмента,
-нужно один раз нажать «Дополнительно» → «Перейти на сайт».
+Резолвинг домена на самой Repka Pi:
+```bash
+echo "127.0.0.1  telerepka-k207.istu.int" | sudo tee -a /etc/hosts
+```
 
 ### 4. Настройте `config.json`
 
-Впишите реальные IP-адреса фоторамок в локальной Wi-Fi-сети Repka Pi
-(диапазон вида `10.42.0.x`, см. `docs/REPKA_PI_PHOTOFRAME.md`):
+Впишите реальные IP-адреса фоторамок в локальной Wi-Fi-сети Repka Pi:
 
 ```json
 {
@@ -111,31 +182,50 @@ openssl req -x509 -newkey rsa:2048 -nodes \
 }
 ```
 
-### 5. Автозапуск сервера (systemd)
+### 5. Transparent proxy для OTA-обновлений рамок
+
+```bash
+sudo cp squid.conf /etc/squid/squid.conf
+sudo mkdir -p /etc/squid/certs
+sudo openssl req -new -newkey rsa:2048 -sha256 -days 3650 -nodes -x509 \
+  -keyout /etc/squid/certs/dummy.pem -out /etc/squid/certs/dummy.pem \
+  -subj "/CN=repka-transparent-proxy"
+sudo chown -R proxy:proxy /etc/squid/certs
+sudo systemctl restart squid
+
+sudo nft add table inet nat
+sudo nft 'add chain inet nat prerouting { type nat hook prerouting priority -100; }'
+sudo nft add rule inet nat prerouting ip saddr 10.42.0.101 tcp dport 80 redirect to :3129
+sudo nft add rule inet nat prerouting ip saddr 10.42.0.101 tcp dport 443 redirect to :3130
+```
+
+### 6. Chrony (время для рамок)
+
+```bash
+sudo apt-get install -y chrony
+# см. раздел "Время (NTP)" выше
+```
+
+### 7. Автозапуск сервера (systemd)
 
 ```bash
 sudo cp lab-hub.service /etc/systemd/system/
-sudo nano /etc/systemd/system/lab-hub.service   # поправьте пути и User, если нужно
+sudo nano /etc/systemd/system/lab-hub.service   # поправьте пути на ~/git/TeleRepka и User
 sudo systemctl daemon-reload
 sudo systemctl enable --now lab-hub.service
 sudo systemctl status lab-hub.service
 ```
 
-### 6. Автозапуск Chromium в режиме киоска на ТВ
+### 8. Автозапуск Chromium в режиме киоска на ТВ
 
-Требуется графическая сессия автологина (например, LightDM/lightweight X11 с
-автовходом пользователя `user`) — иначе `DISPLAY=:0` будет недоступен.
+Требуется графическая сессия автологина (LightDM/lightweight X11 с автовходом
+пользователя `user`) — иначе `DISPLAY=:0` будет недоступен.
 
 ```bash
 sudo cp lab-hub-kiosk.service /etc/systemd/system/
-sudo nano /etc/systemd/system/lab-hub-kiosk.service   # поправьте пути и User
+sudo nano /etc/systemd/system/lab-hub-kiosk.service   # поправьте URL на https://telerepka-k207.istu.int/
 sudo systemctl daemon-reload
 sudo systemctl enable --now lab-hub-kiosk.service
-```
-
-Проверьте, что автовход в графическую сессию включён:
-```bash
-sudo raspi-config   # или repka-config, если доступен: System Options → Boot / Auto Login
 ```
 
 ## Использование сотрудниками
@@ -143,29 +233,30 @@ sudo raspi-config   # или repka-config, если доступен: System Opt
 Любой сотрудник в сети лаборатории открывает в браузере:
 
 ```
-https://<IP Repka Pi>:5000/broadcast
+https://telerepka-k207.istu.int/broadcast
 ```
 
 Вводит своё имя, нажимает «Показать экран» или «Показать камеру + звук» —
 трансляция сразу появляется плиткой на ТВ. Несколько сотрудников могут
 транслировать одновременно, сетка на ТВ подстраивается автоматически.
-Кнопка «Остановить» завершает трансляцию.
 
 ## Структура проекта
 
 ```
-lab-hub/
-├── app.py               # Flask + SocketIO сервер, WebRTC-сигнализация
-├── sensors.py           # опрос датчиков (или симуляция, если не подключены)
-├── photoframes.py       # опрос REST API фоторамок ESP32 PhotoFrame
-├── config.json          # список фоторамок, интервалы опроса
+TeleRepka/
+├── app.py                   # Flask + SocketIO сервер, WebRTC-сигнализация,
+│                             #   слайд-шоу, reverse-proxy на рамки
+├── sensors.py                # опрос датчиков (или симуляция, если не подключены)
+├── photoframes.py             # опрос REST API рамок + reverse-proxy до них
+├── config.json                # список фоторамок, интервалы опроса
 ├── requirements.txt
+├── nginx_telerepka.conf        # единая точка входа на 80/443, домен сайта
+├── squid.conf                   # transparent proxy для OTA-обновлений рамок
 ├── templates/
-│   ├── index.html       # страница для ТВ (kiosk)
-│   └── broadcast.html   # страница для рабочего места сотрудника
-├── certs/               # самоподписанный TLS-сертификат (создать локально)
-├── lab-hub.service          # systemd unit для сервера
-└── lab-hub-kiosk.service    # systemd unit для Chromium kiosk
+│   ├── index.html               # страница для ТВ (kiosk)
+│   └── broadcast.html            # страница для рабочего места сотрудника
+├── lab-hub.service                # systemd unit для сервера
+└── lab-hub-kiosk.service           # systemd unit для Chromium kiosk
 ```
 
 ## Возможные доработки
@@ -177,3 +268,6 @@ lab-hub/
   для внешних посетителей.
 - Настроить TURN-сервер, если у части рабочих мест окажется симметричный NAT
   и одного STUN (`stun.l.google.com`) не хватит для установления P2P-соединения.
+- Автоматизировать nftables-правила для squid (сейчас применяются вручную,
+  не через systemd/nft-конфиг-файл — при перезагрузке Repka Pi их нужно
+  будет добавить снова, если не сохранить через `nft list ruleset > /etc/nftables.conf`).
