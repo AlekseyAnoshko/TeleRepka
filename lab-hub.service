@@ -6,8 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=user
-WorkingDirectory=/home/user/lab-hub
-ExecStart=/usr/bin/python3 /home/user/lab-hub/app.py
+WorkingDirectory=/home/user/git/TeleRepka
+ExecStart=/home/user/git/TeleRepka/venv/bin/python3 /home/user/git/TeleRepka/app.py
 Restart=on-failure
 RestartSec=5
 Environment=LAB_HUB_SECRET=change-me-to-a-random-value
