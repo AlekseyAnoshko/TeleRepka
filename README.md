@@ -9,9 +9,11 @@
 3. **Трансляция с рабочих мест** — любой сотрудник открывает страницу `/broadcast`
    со своего компьютера и выводит экран или камеру+звук прямо на ТВ лаборатории
    через WebRTC, без установки дополнительного ПО.
-4. **Transparent proxy для рамок** (`squid.conf`) — даёт фоторамкам, у которых нет
-   настройки HTTP-прокси в прошивке, доступ в интернет для OTA-обновлений через
-   прокси-сервер университета.
+4. **Transparent proxy для рамок** (`squid.conf` + `nftables-photoframe-proxy.conf`) —
+   даёт фоторамкам, у которых нет настройки HTTP-прокси в прошивке, доступ
+   в интернет для OTA-обновлений через прокси-сервер университета. **Проверено
+   и работает**: в `access.log` Squid видны успешные `TCP_TUNNEL/200` запросы рамки
+   к `api.github.com` через `FIRSTUP_PARENT/172.27.100.5`.
 
 Repka Pi при этом одновременно: подключена к сети университета по проводному
 Ethernet (`end0`), раздаёт Wi-Fi как хотспот для фоторамок сотрудников (подсеть
@@ -60,25 +62,32 @@ HTTP-прокси вообще — она всегда пытается соед
 это на стороне рамки невозможно, и трафик нужно перехватывать прозрачно на
 уровне сети, силами самой Repka Pi.
 
-Решение — **transparent proxy** на связке Squid + nftables, конфиг в
-`squid.conf`:
+Решение — **transparent proxy** на связке Squid + nftables, подтверждённое
+работающим на практике:
 
-- `http_port 3129 intercept` и `https_port 3130 intercept ssl-bump ...` —
-  Squid слушает в режиме перехвата, клиент (рамка) не знает о его
-  существовании.
+- `squid.conf` — конфиг Squid: `http_port 3129 intercept` и
+  `https_port 3130 intercept ssl-bump ...`. Squid слушает в режиме
+  перехвата, клиент (рамка) не знает о его существовании. Нужен
+  также обычный `http_port 3128` (без intercept) — без него Squid валится
+  с `FATAL: mimeLoadIcon: cannot parse internal URL` при генерации служебных
+  внутренних URL.
 - Для HTTPS используется `ssl_bump peek/splice`, а не полноценный MITM —
   Squid лишь подсматривает SNI из TLS-хендшейка (какой домен запрашивается),
   но не расшифровывает и не подменяет сертификат. Это принципиально,
-  потому что прошить кастомный CA-сертификат в ESP32 нельзя.
+  потому что прошить кастомный CA-сертификат в ESP32 нельзя. `generate-host-
+  certificates=on` требует обязательно инициализированной базы
+  `sslcrtd_program`/`ssl_db` (см. установку ниже) — без неё Squid падает с
+  `FATAL: The sslcrtd_program helpers are crashing too rapidly`.
 - `cache_peer 172.27.100.5 parent 4444 0 no-query default` — весь трафик,
   прошедший через Squid, дальше уходит на прокси университета как на
   «родителя последней инстанции».
-- На уровне `nftables` (настраивается отдельно, не входит в `squid.conf`)
-  добавляется `redirect` для пакетов от IP рамки на порты `3129`/`3130` —
-  без этого правила Squid просто ничего не увидит, трафик рамки пойдёт мимо
-  него напрямую и будет заблокирован сетью университета, как и раньше.
+- `nftables-photoframe-proxy.conf` — `redirect` для пакетов от IP рамки на
+  порты `3129`/`3130` — без этого правила Squid просто ничего не увидит.
 
-Установка и nftables-правила — см. комментарии в шапке `squid.conf`.
+**Важно:** правила nftables, добавленные вручную (`nft add ...`), живут только
+в памяти и пропадают при перезагрузке Repka Pi. Файл `nftables-photoframe-proxy.conf`
+нужно подключить через `/etc/nftables.conf` (см. установку ниже), иначе
+после каждой перезагрузки transparent proxy придется настраивать снова.
 
 ### 3. Время (NTP) — отдельная, но связанная проблема
 
@@ -91,7 +100,8 @@ Squid не получится (Squid не умеет проксировать п
 Решение — `chrony` на самой Repka Pi, синхронизирующийся с внутрикампусным
 NTP-сервером университета (`172.27.100.5`, отзывается на UDP/123 в отличие от
 внешних `pool.ntp.org` — трафик внутри кампуса не блокируется, в отличие от
-исходящего в интернет), и рамка настраивается брать время не с
+исходящего в интернет; подтверждено ответом через `chronyc sources -v`, статус
+`*`, имя `free.istu`), и рамка настраивается брать время не с
 `pool.ntp.org`, а с самой Repka Pi (`10.42.0.1`) как с локального NTP-сервера
 (`PATCH /api/config`, поле `ntp_server`):
 
@@ -116,7 +126,7 @@ chronyc sources -v   # ожидаем '*' у 172.27.100.5 (free.istu)
 
 ## Установка
 
-### 1. Системные зависиимости
+### 1. Системные зависимости
 
 ```bash
 sudo apt-get update
@@ -191,13 +201,37 @@ sudo openssl req -new -newkey rsa:2048 -sha256 -days 3650 -nodes -x509 \
   -keyout /etc/squid/certs/dummy.pem -out /etc/squid/certs/dummy.pem \
   -subj "/CN=repka-transparent-proxy"
 sudo chown -R proxy:proxy /etc/squid/certs
-sudo systemctl restart squid
 
-sudo nft add table inet nat
-sudo nft 'add chain inet nat prerouting { type nat hook prerouting priority -100; }'
-sudo nft add rule inet nat prerouting ip saddr 10.42.0.101 tcp dport 80 redirect to :3129
-sudo nft add rule inet nat prerouting ip saddr 10.42.0.101 tcp dport 443 redirect to :3130
+# База сертификатов для ssl-bump generate-host-certificates — важно НЕ
+# создавать /var/spool/squid/ssl_db заранее через mkdir — утилита
+# создаёт её сама от нужного владельца:
+sudo -u proxy /usr/lib/squid/security_file_certgen -c -s /var/spool/squid/ssl_db -M 4MB
+
+sudo systemctl restart squid
+sudo systemctl status squid   # ожидаем active (running), без FATAL в логе
+
+sudo ss -tlnp | grep squid    # ожидаем 3128, 3129, 3130
 ```
+
+Активация nftables-редиректа — через постоянный конфиг, чтобы правила не
+пропадали при перезагрузке (см. `nftables-photoframe-proxy.conf`):
+```bash
+sudo cp nftables-photoframe-proxy.conf /etc/nftables-photoframe-proxy.conf
+sudo nft -f /etc/nftables-photoframe-proxy.conf
+echo 'include "/etc/nftables-photoframe-proxy.conf"' | sudo tee -a /etc/nftables.conf
+sudo systemctl enable nftables
+
+sudo nft list table inet nat   # проверка
+```
+
+Проверка сквозного прохождения:
+```bash
+sudo tail -f /var/log/squid/access.log
+```
+При пробуждении рамки в логе должна появиться строка вида
+`TCP_TUNNEL/200 ... CONNECT api.github.com:443 - FIRSTUP_PARENT/172.27.100.5` —
+это подтверждает, что OTA-трафик рамки успешно ушёл через transparent
+proxy и дальше в интернет.
 
 ### 6. Chrony (время для рамок)
 
@@ -244,19 +278,20 @@ https://telerepka-k207.istu.int/broadcast
 
 ```
 TeleRepka/
-├── app.py                   # Flask + SocketIO сервер, WebRTC-сигнализация,
-│                             #   слайд-шоу, reverse-proxy на рамки
-├── sensors.py                # опрос датчиков (или симуляция, если не подключены)
-├── photoframes.py             # опрос REST API рамок + reverse-proxy до них
-├── config.json                # список фоторамок, интервалы опроса
+├── app.py                        # Flask + SocketIO сервер, WebRTC-сигнализация,
+│                                #   слайд-шоу, reverse-proxy на рамки
+├── sensors.py                     # опрос датчиков (или симуляция, если не подключены)
+├── photoframes.py                  # опрос REST API рамок + reverse-proxy до них
+├── config.json                     # список фоторамок, интервалы опроса
 ├── requirements.txt
-├── nginx_telerepka.conf        # единая точка входа на 80/443, домен сайта
-├── squid.conf                   # transparent proxy для OTA-обновлений рамок
+├── nginx_telerepka.conf             # единая точка входа на 80/443, домен сайта
+├── squid.conf                       # transparent proxy для OTA-обновлений рамок
+├── nftables-photoframe-proxy.conf    # постоянные правила redirect для squid.conf
 ├── templates/
-│   ├── index.html               # страница для ТВ (kiosk)
-│   └── broadcast.html            # страница для рабочего места сотрудника
-├── lab-hub.service                # systemd unit для сервера
-└── lab-hub-kiosk.service           # systemd unit для Chromium kiosk
+│   ├── index.html                    # страница для ТВ (kiosk)
+│   └── broadcast.html                 # страница для рабочего места сотрудника
+├── lab-hub.service                     # systemd unit для сервера
+└── lab-hub-kiosk.service                # systemd unit для Chromium kiosk
 ```
 
 ## Возможные доработки
@@ -268,6 +303,7 @@ TeleRepka/
   для внешних посетителей.
 - Настроить TURN-сервер, если у части рабочих мест окажется симметричный NAT
   и одного STUN (`stun.l.google.com`) не хватит для установления P2P-соединения.
-- Автоматизировать nftables-правила для squid (сейчас применяются вручную,
-  не через systemd/nft-конфиг-файл — при перезагрузке Repka Pi их нужно
-  будет добавить снова, если не сохранить через `nft list ruleset > /etc/nftables.conf`).
+- Проверить не только метаданные OTA-запросы (`api.github.com`), но и самую
+  загрузку бинарника прошивки (обычно `objects.githubusercontent.com` или
+  `github.com/.../releases/download/...`) — убедиться, что и она успешно
+  прошла через transparent proxy, а не только запросы к API.
