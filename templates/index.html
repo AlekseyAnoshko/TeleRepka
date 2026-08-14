@@ -89,6 +89,45 @@
     flex-direction: column; gap: 8px;
   }
   #placeholder .hint { font-size: 14px; color: var(--muted); }
+
+  /* Когда есть трансляция, HDMI используется только как видеовыход. */
+  body.broadcast-active #app {
+    display: block;
+    padding: 0;
+  }
+  body.broadcast-active header,
+  body.broadcast-active aside {
+    display: none;
+  }
+  body.broadcast-active main.stage {
+    position: fixed;
+    inset: 0;
+    display: block;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: #000;
+  }
+  body.broadcast-active #video-grid {
+    width: 100vw;
+    height: 100vh;
+    gap: 0;
+  }
+  body.broadcast-active .video-tile {
+    border: 0;
+    border-radius: 0;
+  }
+  body.broadcast-active .video-tile video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  body.broadcast-active .video-tile .name-tag {
+    bottom: 18px;
+    left: 18px;
+    font-size: 18px;
+  }
+
 </style>
 </head>
 <body>
@@ -146,7 +185,7 @@
   </main>
 </div>
 
-<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="/static/socket.io.min.js"></script>
 <script>
 const socket = io();
 
@@ -198,11 +237,16 @@ const placeholder = document.getElementById('placeholder');
 
 function updateGridLayout() {
   const n = Object.keys(peers).length;
+
+  // Один или несколько потоков: видео становится единственным содержимым HDMI.
+  document.body.classList.toggle('broadcast-active', n > 0);
+
   if (n === 0) {
     placeholder.style.display = 'flex';
     videoGrid.style.gridTemplateColumns = '1fr';
     return;
   }
+
   placeholder.style.display = 'none';
   const cols = n === 1 ? 1 : (n <= 4 ? 2 : 3);
   videoGrid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
@@ -214,6 +258,7 @@ function addTile(sid, name) {
   tile.id = 'tile-' + sid;
   tile.innerHTML = `<video autoplay playsinline></video><div class="name-tag">${name}</div>`;
   videoGrid.appendChild(tile);
+  document.body.classList.add('broadcast-active');
   updateGridLayout();
   return tile.querySelector('video');
 }
@@ -221,10 +266,13 @@ function addTile(sid, name) {
 function removeTile(sid) {
   const tile = document.getElementById('tile-' + sid);
   if (tile) tile.remove();
+  if (Object.keys(peers).length === 0) {
+    document.body.classList.remove('broadcast-active');
+  }
   updateGridLayout();
 }
 
-socket.emit('tv-join');
+socket.on('connect', () => socket.emit('tv-join'));
 
 socket.on('broadcaster-offer', async ({ sid, name, sdp }) => {
   const pc = new RTCPeerConnection(ICE_SERVERS);

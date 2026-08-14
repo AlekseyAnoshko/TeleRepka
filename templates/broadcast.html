@@ -41,11 +41,11 @@
     <label for="display-name">Ваше имя (отобразится на ТВ)</label>
     <input type="text" id="display-name" placeholder="Иван Иванов">
 
-    <button id="btn-screen">Показать экран</button>
-    <button id="btn-camera">Показать камеру + звук</button>
+    <button id="btn-screen">Показать экран на HDMI</button>
+    <button id="btn-camera">Показать камеру + звук на HDMI</button>
     <button id="btn-stop" disabled>Остановить</button>
 
-    <div id="status">Не подключено</div>
+    <div id="status">Проверяем готовность телевизора…</div>
     <video id="preview" autoplay playsinline muted></video>
   </div>
 
@@ -56,7 +56,7 @@
     и микрофону, когда браузер спросит.
   </div>
 
-<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="/static/socket.io.min.js"></script>
 <script>
 const socket = io();
 const ICE_SERVERS = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
@@ -76,7 +76,35 @@ function setStatus(text, cls) {
   statusEl.className = cls || "";
 }
 
+let tvReady = false;
+
+function setTvStatus(ready) {
+  tvReady = ready;
+  if (!pc) {
+    setStatus(
+      ready ? "Телевизор готов к приёму по HDMI" : "Телевизор недоступен — ожидается запуск киоска",
+      ready ? "live" : "error"
+    );
+  }
+}
+
+socket.on("connect", () => {
+  socket.emit("tv-ready-check");
+});
+
+socket.on("disconnect", () => {
+  setTvStatus(false);
+});
+
+socket.on("tv-status", ({ ready }) => {
+  setTvStatus(ready);
+});
+
 async function startBroadcast(getStream) {
+  if (!tvReady) {
+    setStatus("Телевизор пока не подключён. Повторите через несколько секунд.", "error");
+    return;
+  }
   const name = nameInput.value.trim() || "Сотрудник";
   try {
     localStream = await getStream();

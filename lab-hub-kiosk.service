@@ -8,8 +8,8 @@ Type=simple
 User=user
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/user/.Xauthority
-ExecStartPre=/bin/sh -c 'until curl -sk https://localhost:5000/ -o /dev/null; do sleep 1; done'
-ExecStart=/usr/bin/chromium-browser \
+ExecStartPre=/bin/sh -c 'until curl -sk http://localhost:5000/ -o /dev/null; do sleep 1; done'
+ExecStart=/usr/bin/chromium \
   --kiosk \
   --noerrdialogs \
   --disable-infobars \
@@ -18,7 +18,7 @@ ExecStart=/usr/bin/chromium-browser \
   --autoplay-policy=no-user-gesture-required \
   --ignore-certificate-errors \
   --check-for-update-interval=31536000 \
-  https://localhost:5000/
+  http://localhost:5000/
 Restart=on-failure
 RestartSec=3
 

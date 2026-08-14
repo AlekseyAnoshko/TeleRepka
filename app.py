@@ -72,6 +72,9 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("LAB_HUB_SECRET", "change-me")
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 
+# Подключённые HDMI-приёмники (Chromium kiosk на Repka Pi).
+tv_clients: set[str] = set()
+
 # --- HTTP routes: главная панель и трансляция ---------------------------
 
 @app.route("/")
@@ -189,7 +192,23 @@ def on_connect():
 
 @socketio.on("tv-join")
 def tv_join():
+    """Регистрируем Chromium-киоск как готовый HDMI-приёмник."""
+    tv_clients.add(request.sid)
     join_room("tv")
+    socketio.emit("tv-status", {"ready": True})
+
+
+@socketio.on("tv-ready-check")
+def tv_ready_check():
+    """Отдаём сотруднику состояние HDMI-приёмника."""
+    emit("tv-status", {"ready": bool(tv_clients)})
+
+
+@socketio.on("disconnect")
+def on_disconnect():
+    if request.sid in tv_clients:
+        tv_clients.discard(request.sid)
+        socketio.emit("tv-status", {"ready": bool(tv_clients)})
 
 
 @socketio.on("broadcaster-offer")
