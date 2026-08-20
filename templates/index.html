@@ -180,6 +180,11 @@ header h1 {
   transform: translateY(-1px);
 }
 
+.media-link.broadcast {
+  background: var(--accent);
+  color: #0d1117;
+}
+
 .media-link.rutube {
   background: #ffffff;
   color: #121925;
@@ -363,17 +368,18 @@ header h1 {
       </div>
     </div>
 
-    <div class="panel">
-      <h2>Трансляция с рабочих мест</h2>
+<div class="panel">
+  <h2>Трансляция с рабочих мест</h2>
 
-      <div style="font-size: 13px; color: var(--muted); line-height: 1.5;">
-        Чтобы показать экран или камеру на этом экране, откройте со своего компьютера адрес:
-        <br>
-        <code id="broadcast-url" style="color: var(--accent)">
-          https://&lt;адрес сайта&gt;/broadcast
-        </code>
-      </div>
-    </div>
+  <a
+    id="broadcast-link"
+    class="media-link broadcast"
+    href="/broadcast"
+    target="_blank"
+    rel="noopener noreferrer">
+    Трансляция с рабочих мест
+  </a>
+</div>    
 
     <div class="panel media-panel">
       <h2>Видео и музыка</h2>
@@ -420,9 +426,6 @@ header h1 {
 <script>
 const socket = io();
 
-document.getElementById('broadcast-url').textContent =
-  location.protocol + '//' + location.hostname +
-  (location.port ? ':' + location.port : '') + '/broadcast';
 
 function tick() {
   document.getElementById('clock').textContent =
