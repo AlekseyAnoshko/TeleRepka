@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>Лаборатория — информационная панель</title>
+<title>Лаборатория сетевых систем и ИТ-инфраструктуры — информационная панель</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   :root {
@@ -48,11 +48,14 @@
     border-radius: 12px;
   }
 
-  header h1 {
-    margin: 0;
-    font-size: 22px;
-    font-weight: 600;
-  }
+header h1 {
+  margin: 0;
+  overflow: hidden;
+  font-size: 22px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 
   header #clock {
     color: var(--accent);
@@ -172,15 +175,40 @@
     transition: transform 0.15s ease, filter 0.15s ease;
   }
 
-  .media-link:hover {
-    filter: brightness(1.14);
-    transform: translateY(-1px);
-  }
+.media-link:hover {
+  filter: brightness(1.14);
+  transform: translateY(-1px);
+}
 
- .media-link.rutube {
+.media-link.rutube {
+  background: #ffffff;
+  color: #121925;
   border: 1px solid rgba(0, 0, 0, 0.15);
 }
 
+.media-link.youtube {
+  background: #2065d1;
+  color: #ffffff;
+}
+
+.media-link.yandex-music {
+  background: #e8302f;
+  color: #ffffff;
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.header-logo {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  object-fit: contain;
+}
   main.stage {
     display: grid;
     gap: 12px;
@@ -288,10 +316,17 @@
 
 <body>
 <div id="app">
-  <header>
-    <h1>Лаборатория — информационная панель</h1>
-    <div id="clock">--:--:--</div>
-  </header>
+ 
+ <header>
+  <div class="header-brand">
+    <img
+      src="/static/logo-lab-72.png"
+      alt="Логотип лаборатории"
+      class="header-logo">
+    <h1>Информационная панель — Лаборатория сетевых систем и ИТ-Инфраструктуры</h1>
+  </div>
+  <div id="clock">--:--:--</div>
+</header>
 
   <aside>
     <div class="panel">
