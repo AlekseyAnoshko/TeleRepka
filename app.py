@@ -3,11 +3,11 @@ Repka Pi Lab Hub — центральный веб-сервис лаборато
 
 Функции (всё на одном сайте, единый порт 127.0.0.1:5000, наружу отдаётся
 через nginx по имени telerepka-k207.istu.int — см. nginx_telerepka.conf):
-- "/"            — главная страница для ТВ (kiosk), датчики + статус рамок
-- "/broadcast"   — страница сотрудника: трансляция экрана/камеры на ТВ (WebRTC)
+- "/" — главная страница для ТВ (kiosk), датчики + статус рамок
+- "/broadcast" — страница сотрудника: трансляция экрана/камеры на ТВ (WebRTC)
 - "/slideshow.jpg" — раздача следующего слайда для ESP32 PhotoFrame
-- "/photoframe/<name>/<path:subpath>" — reverse-proxy на веб-интерфейс
-   конкретной фоторамки (см. ниже, почему это нужно)
+- "/photoframe/<name>/<subpath>" — reverse-proxy на веб-интерфейс
+  конкретной фоторамки (см. ниже, почему это нужно)
 
 Почему нужен reverse-proxy для рамок: сама рамка живёт в подсети Wi-Fi
 хотспота Repka Pi (10.42.0.x) — эта подсеть недоступна снаружи (из сети
@@ -18,6 +18,16 @@ Repka Pi Lab Hub — центральный веб-сервис лаборато
 запрос до рамки выполняет сам процесс app.py (он и есть шлюз хотспота,
 у него есть маршрут в 10.42.0.0/24), а результат отдаётся браузеру через
 уже работающий домен telerepka-k207.istu.int, куда маршрут есть у всех.
+
+Управление ТВ без клавиатуры/мыши: у телевизора лаборатории нет ввода —
+все действия выполняет сотрудник, открыв тот же адрес
+https://telerepka-k207.istu.int/ на своём компьютере. Значит "/" одновременно
+открыта в двух ролях: как немой Chromium-kiosk на самой Repka Pi (подключён
+к ТВ по HDMI, запускается через ?kiosk=1 в URL — см. lab-hub-kiosk.service)
+и как интерактивная копия у сотрудника. Кнопки RuTube/YouTube/Яндекс.Музыки
+поэтому не переходят по ссылке сами, а шлют команду open-url-on-tv через
+Socket.IO — реальный переход по URL выполняет только тот клиент, который
+зарегистрировался как настоящий ТВ (tv-join), то есть Chromium с ?kiosk=1.
 
 Запуск: python3 app.py
 Слушает 127.0.0.1:5000 по HTTP. TLS-терминацию и единую точку входа
@@ -72,8 +82,17 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("LAB_HUB_SECRET", "change-me")
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 
-# Подключённые HDMI-приёмники (Chromium kiosk на Repka Pi).
+# Подключённые HDMI-приёмники (Chromium kiosk на Repka Pi, страница "/" с ?kiosk=1).
 tv_clients: set[str] = set()
+
+# Домены, на которые разрешено удалённо переключать ТВ кнопками медиасервисов.
+# Без этого белого списка любой, кто достучится до Socket.IO-эндпоинта,
+# мог бы заставить киоск открыть произвольную страницу.
+ALLOWED_MEDIA_PREFIXES = (
+    "https://rutube.ru",
+    "https://www.youtube.com",
+    "https://music.yandex.ru",
+)
 
 # --- HTTP routes: главная панель и трансляция ---------------------------
 
@@ -91,7 +110,7 @@ def broadcast_page():
 
 # --- HTTP route: reverse-proxy на веб-интерфейс фоторамки ---------------
 # Ссылки на страницу конкретной рамки в шаблонах должны указывать сюда
-# (/photoframe/<name>/), а не на её реальный IP в подсети 10.42.0.x —
+# (/photoframe/<имя>/), а не на её реальный IP в подсети 10.42.0.x —
 # см. пояснение в шапке файла и в photoframes.py.
 
 @app.route("/photoframe/<name>/", defaults={"subpath": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
@@ -192,7 +211,9 @@ def on_connect():
 
 @socketio.on("tv-join")
 def tv_join():
-    """Регистрируем Chromium-киоск как готовый HDMI-приёмник."""
+    """Регистрируем Chromium-киоск как готовый HDMI-приёмник.
+    Вызывается только настоящим ТВ (страница "/" открыта с ?kiosk=1) —
+    обычная копия "/" в браузере сотрудника этот эвент не шлёт."""
     tv_clients.add(request.sid)
     join_room("tv")
     socketio.emit("tv-status", {"ready": True})
@@ -241,6 +262,29 @@ def ice_candidate(data):
 @socketio.on("broadcaster-stop")
 def broadcaster_stop():
     emit("broadcaster-stop", {"sid": request.sid}, room="tv")
+
+
+# --- Удалённое переключение ТВ на RuTube / YouTube / Яндекс.Музыку ------
+# У телевизора нет клавиатуры/мышки: все действия выполняет сотрудник,
+# открыв тот же https://telerepka-k207.istu.int/ на своём компьютере.
+# Поэтому кнопки медиасервисов на "/" не открывают ссылку в браузере
+# кликающего, а шлют это событие — реальный переход выполняет только
+# клиент, зарегистрированный как ТВ через tv-join (room "tv").
+
+@socketio.on("open-url-on-tv")
+def open_url_on_tv(data):
+    """data: {url}. Проверяем URL по белому списку и пересылаем в комнату "tv"."""
+    url = (data or {}).get("url", "")
+    if not url.startswith(ALLOWED_MEDIA_PREFIXES):
+        return
+    emit("open-url-on-tv", {"url": url}, room="tv")
+
+
+@socketio.on("tv-go-home")
+def tv_go_home():
+    """Возврат ТВ на дашборд — сотрудник вызывает это со своей копии страницы,
+    когда телевизор нужно вернуть с RuTube/YouTube/Яндекс.Музыки на датчики."""
+    emit("tv-go-home", {}, room="tv")
 
 
 if __name__ == "__main__":
