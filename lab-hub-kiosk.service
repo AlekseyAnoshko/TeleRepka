@@ -20,6 +20,7 @@ ExecStart=/usr/bin/chromium \
   --check-for-update-interval=31536000 \
   --remote-debugging-port=9222 \
   --remote-debugging-address=127.0.0.1 \
+  --remote-allow-origins=http://127.0.0.1:9222 \
   http://localhost:5000/?kiosk=1
 Restart=on-failure
 RestartSec=3
