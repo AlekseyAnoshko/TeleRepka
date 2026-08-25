@@ -66,6 +66,15 @@
     .media-link.youtube { background: #2065d1; color: #ffffff; }
     .media-link.yandex-music { background: #e8302f; color: #ffffff; }
     .media-link.tv-home { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+    .remote-row { display: flex; gap: 8px; margin-top: 9px; }
+    .remote-btn {
+      flex: 1; padding: 10px 0; font-size: 18px; cursor: pointer;
+      background: var(--panel); color: var(--text);
+      border: 1px solid var(--border); border-radius: 9px;
+      transition: filter 0.15s ease, transform 0.15s ease;
+    }
+    .remote-btn:hover { filter: brightness(1.3); transform: translateY(-1px); }
+    .remote-btn:active { transform: translateY(0); filter: brightness(0.9); }
     .header-brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
     .header-logo { width: 48px; height: 48px; flex-shrink: 0; object-fit: contain; }
     main.stage {
@@ -136,6 +145,18 @@
         <a id="btn-rutube" class="media-link rutube" href="javascript:void(0)" data-url="https://rutube.ru/">RuTube</a>
         <a id="btn-youtube" class="media-link youtube" href="javascript:void(0)" data-url="https://www.youtube.com/">YouTube</a>
         <a id="btn-yandex-music" class="media-link yandex-music" href="javascript:void(0)" data-url="https://music.yandex.ru/">Яндекс.Музыка</a>
+
+        <div class="remote-row">
+          <button class="remote-btn" data-action="prev" title="Предыдущий трек">⏮</button>
+          <button class="remote-btn" data-action="play_pause" title="Play/Пауза">⏯</button>
+          <button class="remote-btn" data-action="next" title="Следующий трек">⏭</button>
+        </div>
+        <div class="remote-row">
+          <button class="remote-btn" data-action="vol_down" title="Тише">🔉</button>
+          <button class="remote-btn" data-action="mute" title="Без звука">🔇</button>
+          <button class="remote-btn" data-action="vol_up" title="Громче">🔊</button>
+        </div>
+
         <a id="btn-tv-home" class="media-link tv-home" href="javascript:void(0)">Вернуть дашборд на ТВ</a>
       </div>
     </aside>
@@ -215,13 +236,33 @@
       }
     });
 
-    // Кнопка «Вернуть дашборд на ТВ» — доступна сотруднику на его копии
-    // страницы; выполняется только на самом ТВ.
+    // --- Пульт ТВ: "Вернуть дашборд" и play/pause/next/prev/volume ---------
+    // Эти команды идут не через Socket.IO, а через простой HTTP POST на
+    // сервер, который управляет вкладкой ТВ снаружи через CDP (Chrome
+    // DevTools Protocol) — это работает даже если ТВ сейчас открыт на
+    // RuTube/YouTube/Яндекс.Музыке и не слушает наш JS/Socket.IO.
     document.getElementById('btn-tv-home').addEventListener('click', function () {
-      socket.emit('tv-go-home');
+      fetch('/tv/go-home', { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (!data.ok) alert('Не удалось вернуть дашборд на ТВ — проверьте CDP на Repka Pi (порт 9222).');
+        })
+        .catch(function () { alert('Не удалось связаться с сервером.'); });
     });
-    socket.on('tv-go-home', function () {
-      if (isTvKiosk) window.location.href = '/?kiosk=1';
+
+    document.querySelectorAll('.remote-btn[data-action]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        fetch('/tv/media', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: btn.dataset.action })
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            if (!data.ok) console.warn('Команда пульта не выполнена:', btn.dataset.action);
+          })
+          .catch(function () { console.warn('Не удалось связаться с сервером.'); });
+      });
     });
 
     // --- WebRTC: приём трансляции с рабочих мест сотрудников -----------------

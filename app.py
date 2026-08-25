@@ -29,6 +29,16 @@ https://telerepka-k207.istu.int/ на своём компьютере. Знач�
 Socket.IO — реальный переход по URL выполняет только тот клиент, который
 зарегистрировался как настоящий ТВ (tv-join), то есть Chromium с ?kiosk=1.
 
+Возврат на дашборд и управление плеером (play/pause/next/prev/volume) не
+могут идти через Socket.IO: после перехода на RuTube/YouTube/Яндекс.Музыку
+страница index.html выгружается из вкладки целиком, вместе с ней умирает
+JS и Socket.IO-соединение — слушать команду там уже некому. Поэтому обеими
+функциями управляем СНАРУЖИ вкладки через Chrome DevTools Protocol (CDP):
+Chromium на ТВ запускается с --remote-debugging-port=9222 (см.
+lab-hub-kiosk.service), а сервер отправляет туда команды Page.navigate
+(вернуть дашборд) и Input.dispatchKeyEvent (эмуляция медиа-клавиш) прямо
+по WebSocket, независимо от того, какой сайт открыт в вкладке сейчас.
+
 Запуск: python3 app.py
 Слушает 127.0.0.1:5000 по HTTP. TLS-терминацию и единую точку входа
 (80 и 443, домен telerepka-k207.istu.int) обеспечивает nginx перед этим
@@ -52,6 +62,7 @@ import os
 import threading
 from pathlib import Path
 
+import requests as _requests
 from flask import Flask, Response, abort, render_template, request, send_file
 from flask_socketio import SocketIO, emit, join_room
 
@@ -280,11 +291,97 @@ def open_url_on_tv(data):
     emit("open-url-on-tv", {"url": url}, room="tv")
 
 
-@socketio.on("tv-go-home")
-def tv_go_home():
-    """Возврат ТВ на дашборд — сотрудник вызывает это со своей копии страницы,
-    когда телевизор нужно вернуть с RuTube/YouTube/Яндекс.Музыки на датчики."""
-    emit("tv-go-home", {}, room="tv")
+# --- Управление вкладкой ТВ через Chrome DevTools Protocol (CDP) --------
+# После перехода на RuTube/YouTube/Яндекс.Музыку страница index.html
+# выгружается из вкладки — вместе с ней умирает Socket.IO-соединение,
+# слушать команду там уже некому. Поэтому навигацией "назад на дашборд"
+# и управлением плеером (play/pause/next/prev/volume) управляем СНАРУЖИ
+# вкладки через CDP: Chromium на ТВ запускается с
+# --remote-debugging-port=9222 (см. lab-hub-kiosk.service), а сюда сервер
+# посылает команды Page.navigate / Input.dispatchKeyEvent по WebSocket —
+# это работает независимо от того, какой сайт открыт в вкладке сейчас.
+
+CDP_HOST = "127.0.0.1"
+CDP_PORT = 9222
+DASHBOARD_URL = "http://localhost:5000/?kiosk=1"
+
+MEDIA_KEY_CODES = {
+    # action -> (code, windowsVirtualKeyCode), см. CDP Input.dispatchKeyEvent
+    "play_pause": ("MediaPlayPause", 179),
+    "next":       ("MediaTrackNext", 176),
+    "prev":       ("MediaTrackPrevious", 177),
+    "vol_up":     ("AudioVolumeUp", 175),
+    "vol_down":   ("AudioVolumeDown", 174),
+    "mute":       ("AudioVolumeMute", 173),
+}
+
+
+def _cdp_tab_ws_url():
+    """Возвращает webSocketDebuggerUrl единственной вкладки Chromium-kiosk
+    (в kiosk-режиме вкладка всегда одна) или None, если CDP недоступен."""
+    try:
+        tabs = _requests.get(f"http://{CDP_HOST}:{CDP_PORT}/json", timeout=3).json()
+    except Exception:
+        return None
+    pages = [t for t in tabs if t.get("type") == "page"]
+    if not pages:
+        return None
+    return pages[0].get("webSocketDebuggerUrl")
+
+
+def _cdp_send(ws_url: str, method: str, params: dict) -> bool:
+    try:
+        import websocket
+        ws = websocket.create_connection(ws_url, timeout=3)
+        ws.send(json.dumps({"id": 1, "method": method, "params": params}))
+        ws.recv()
+        ws.close()
+        return True
+    except Exception:
+        return False
+
+
+def _cdp_navigate(url: str) -> bool:
+    """Отправляет вкладке ТВ команду Page.navigate — работает даже если
+    вкладка сейчас открыта на чужом сайте (RuTube/YouTube)."""
+    ws_url = _cdp_tab_ws_url()
+    if not ws_url:
+        return False
+    return _cdp_send(ws_url, "Page.navigate", {"url": url})
+
+
+def _cdp_media_key(action: str) -> bool:
+    """Эмулирует нажатие медиа-клавиши во вкладке ТВ. YouTube, Яндекс.Музыка
+    и большинство современных плееров слушают такие клавиши через Media
+    Session API — работает независимо от того, какой сервис сейчас открыт."""
+    if action not in MEDIA_KEY_CODES:
+        return False
+    code, vk = MEDIA_KEY_CODES[action]
+    ws_url = _cdp_tab_ws_url()
+    if not ws_url:
+        return False
+    key_down = {"type": "keyDown", "code": code, "windowsVirtualKeyCode": vk, "key": code}
+    key_up = {"type": "keyUp", "code": code, "windowsVirtualKeyCode": vk, "key": code}
+    return _cdp_send(ws_url, "Input.dispatchKeyEvent", key_down) and \
+        _cdp_send(ws_url, "Input.dispatchKeyEvent", key_up)
+
+
+@app.route("/tv/go-home", methods=["POST"])
+def tv_go_home_http():
+    """Кнопка «Вернуть дашборд на ТВ». HTTP, а не Socket.IO — потому что
+    вкладка ТВ может быть открыта на чужом сайте и не слушать наш JS."""
+    ok = _cdp_navigate(DASHBOARD_URL)
+    return {"ok": ok}, (200 if ok else 502)
+
+
+@app.route("/tv/media", methods=["POST"])
+def tv_media_control():
+    """Пульт сотрудника: play_pause / next / prev / vol_up / vol_down / mute.
+    Кнопки пульта на странице "/" не открывают настоящий сайт медиасервиса
+    у сотрудника — они управляют уже открытым плеером на ТВ через CDP."""
+    action = (request.get_json(silent=True) or {}).get("action", "")
+    ok = _cdp_media_key(action)
+    return {"ok": ok}, (200 if ok else 502)
 
 
 if __name__ == "__main__":

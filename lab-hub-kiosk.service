@@ -18,6 +18,8 @@ ExecStart=/usr/bin/chromium \
   --autoplay-policy=no-user-gesture-required \
   --ignore-certificate-errors \
   --check-for-update-interval=31536000 \
+  --remote-debugging-port=9222 \
+  --remote-debugging-address=127.0.0.1 \
   http://localhost:5000/?kiosk=1
 Restart=on-failure
 RestartSec=3
