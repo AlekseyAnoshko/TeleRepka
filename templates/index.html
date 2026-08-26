@@ -257,27 +257,36 @@
       const showIdle = isDashboardOnTv && Object.keys(peers).length === 0;
       tvIdleVideo.style.display = showIdle ? 'block' : 'none';
       tvScreen.style.display = showIdle ? 'none' : (tvScreen.dataset.hasFrame === '1' ? 'block' : 'none');
+      if (showIdle) tvIdleVideo.play().catch(function () {});
     }
 
-    socket.on('tv_active_state', function (data) {
-      isDashboardOnTv = !!(data && data.is_dashboard);
-      updateIdleVideoVisibility();
-    });
-
-    fetch('/tv/screencast/start', { method: 'POST' })
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        if (!data.ok) tvPlaceholder.textContent = 'Не удалось подключиться к экрану ТВ.';
-      })
-      .catch(function () { tvPlaceholder.textContent = 'Не удалось связаться с сервером.'; });
-
-    socket.on('tv_screencast_frame', function (data) {
-      if (!data || !data.jpeg) return;
-      tvScreen.src = 'data:image/jpeg;base64,' + data.jpeg;
-      tvScreen.dataset.hasFrame = '1';
+    if (isTvKiosk) {
+      // Сама страница киоска и есть вкладка ТВ. Подключаться к CDP-скринкасту
+      // самой себя не нужно (это и вызывало рекурсию "дашборд в дашборде").
       tvPlaceholder.style.display = 'none';
+      isDashboardOnTv = true;
       updateIdleVideoVisibility();
-    });
+    } else {
+      socket.on('tv_active_state', function (data) {
+        isDashboardOnTv = !!(data && data.is_dashboard);
+        updateIdleVideoVisibility();
+      });
+
+      fetch('/tv/screencast/start', { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (!data.ok) tvPlaceholder.textContent = 'Не удалось подключиться к экрану ТВ.';
+        })
+        .catch(function () { tvPlaceholder.textContent = 'Не удалось связаться с сервером.'; });
+
+      socket.on('tv_screencast_frame', function (data) {
+        if (!data || !data.jpeg) return;
+        tvScreen.src = 'data:image/jpeg;base64,' + data.jpeg;
+        tvScreen.dataset.hasFrame = '1';
+        tvPlaceholder.style.display = 'none';
+        updateIdleVideoVisibility();
+      });
+    }
 
     function mapToTvCoords(evt) {
       const rect = tvScreen.getBoundingClientRect();
