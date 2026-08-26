@@ -1,0 +1,86 @@
+# СПРАВОСШННАЗНАЛОЖАеНие МЖ — рабочая коаипя /etc/lxdm/lxdm.conf с Repka Pi.
+#
+# Зачем это здесь: 26.08.2026 после системной перезагрузки Repka Pi киоск
+# перестал стартовать — вместо дашборда показывался стандартный экран
+# входа LXDM. Причина: строка "autologin=dgod" в /etc/lxdm/lxdm.conf была
+# закомментирована (значение "dgod" — это дефолтный placeholder самого
+# пакета lxdm, не реальный пользователь). Без автологина LXDM всегда
+# ждёт ручного ввода пароля, из-за чего graphical.target не считается
+# достигнутым и lab-hub-kiosk.service не может подняться автоматически.
+#
+# Этот файл лежит здесь как справочная копия РАБОСТАй конфигурации — он
+# НЕ применяется автоматически (lxdm читает только /etc/lxdm/lxdm.conf
+# на самой машине, не файлы из git-репозитория). Если после очередного
+# обновления пакета lxdm (apt upgrade) настройки автологина снова сбросятся
+# на дефолт, восстановить их можно, скопировав этот файл:
+#
+#   sudo cp lxdm.conf.reference /etc/lxdm/lxdm.conf
+#   sudo systemctl restart lxdm.service
+#
+# либо просто вручную вписать одну критичную строку в секции [base]:
+#
+#   autologin=user
+#
+# Дата снятия копии: 26.08.2026, подтверждено работающим состоянием (киоск
+# поднимается автоматически без запроса пароля после перезагрузки).
+
+[base]
+## uncomment and set autologin username to enable autologin
+autologin=user
+
+## uncomment and set timeout to enable timeout autologin,
+## the value should >=5
+# timeout=10
+
+## default session or desktop used when no systemwide config
+ session=/usr/bin/startxfce4
+
+## uncomment and set to set numlock on your keyboard
+# numlock=0
+
+## set this if you don't want to put xauth file at ~/.Xauthority
+# xauth_path=/tmp
+
+# not ask password for users who have empty password
+# skip_password=1
+
+## greeter used to welcome the user
+greeter=/usr/lib/lxdm/lxdm-greeter-gtk
+
+[server]
+## arg used to start xserver, not fully function
+# arg=/usr/bin/X -background vt1
+# uncomment this if you really want xserver listen to tcp
+# tcp_listen=1
+
+[display]
+## gtk theme used by greeter
+gtk_theme=Clearlooks
+
+## background of the greeter
+#bg=/usr/share/backgrounds/default.png
+bg=/usr/share/images/desktop-base/login-background.svg
+
+## if show bottom pane
+bottom_pane=1
+
+## if show language select control
+lang=1
+
+## if show keyboard layout select control
+keyboard=0
+
+## the theme of greeter
+theme=Industrial
+
+[input]
+
+[userlist]
+## if disable the user list control at greeter
+disable=0
+
+## whitelist user
+white=
+
+## blacklist user
+black=
