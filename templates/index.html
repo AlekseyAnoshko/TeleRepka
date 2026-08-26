@@ -258,10 +258,8 @@
     socket.on('tv_screencast_frame', function (data) {
       if (!data || !data.jpeg) return;
       tvScreen.src = 'data:image/jpeg;base64,' + data.jpeg;
-      if (tvScreen.style.display === 'none') {
-        tvScreen.style.display = 'block';
-        tvPlaceholder.style.display = 'none';
-      }
+      tvScreen.style.display = 'block';
+      tvPlaceholder.style.display = 'none';
     });
 
     function mapToTvCoords(evt) {
