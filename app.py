@@ -11,7 +11,7 @@ Repka Pi Lab Hub — центральный веб-сервис лаборато
 
 Управление ТВ без клавиатуры/мыши: все действия выполняет сотрудник, открыв тот же
 адрес https://telerepka-k207.istu.int/ на своём компьютере. Кнопки RuTube/
- YouTube/Яндекс.Музыки и «Вернуть дашборд на ТВ» — быстрые ярлыки: шлют
+YouTube/Яндекс.Музыки и «Вернуть дашборд на ТВ» — быстрые ярлыки: шлют
 команду серверу (open-url-on-tv через Socket.IO / HTTP на /tv/go-home), который
 управляет вкладкой ТВ через Chrome DevTools Protocol (CDP, порт 9222, см.
 lab-hub-kiosk.service).
@@ -21,6 +21,12 @@ lab-hub-kiosk.service).
 получает поток JPEG-кадров вкладки (Page.startScreencast) и ретранслирует
 их всем подключённым браузерам сотрудников через Socket.IO. Клики/нажатия
 сотрудника идут в обратную сторону через Input.dispatchMouseEvent/dispatchKeyEvent.
+
+Фоновое видео логотипа: когда ТВ показывает сам дашборд (никто не открыл
+RuTube/YouTube/Яндекс.Музыку) и нет WebRTC-трансляции с рабочих мест, в
+области "Управление киоском" вместо живого CDP-скриншота (это была бы
+rekursiya — дашборд внутри дашборда) крутится /static/video-logo-lab.mp4.
+Различение состояния идёт по URL вкладки ТВ через tv_active_url_loop.
 
 Запуск: python3 app.py. Слушает 127.0.0.1:5000 по HTTP, TLS и единая точка
 входа — через nginx (см. nginx_telerepka.conf).
@@ -288,7 +294,7 @@ def tv_go_home_http():
 
 @app.route("/tv/media", methods=["POST"])
 def tv_media_control():
-    """play_pause/next/prev/vol_up/vol_down/mute через CDP-медиаклавиши (API сохранён, кнопки пульта в UI убраны)."""
+    """play_pause/next/prev/vol_up/vol_down/mute через CDP-медиаклавиши."""
     action = (request.get_json(silent=True) or {}).get("action", "")
     ok = _cdp_media_key(action)
     return {"ok": ok}, (200 if ok else 502)
@@ -411,23 +417,18 @@ _screencast = ScreencastSession()
 
 @app.route("/tv/screencast/start", methods=["POST"])
 def screencast_start():
-    """Сотрудник открыл дашборд — подключаемся (или переиспользуем уже идущий)
-    к потоку экрана ТВ. Несколько одновременных зрителей — норма."""
     ok = _screencast.add_viewer()
     return {"ok": ok}, (200 if ok else 502)
 
 
 @app.route("/tv/screencast/stop", methods=["POST"])
 def screencast_stop():
-    """Сотрудник закрыл вкладку/ушёл со страницы. Останавливается только
-    когда ушли все зрители."""
     _screencast.remove_viewer()
     return {"ok": True}
 
 
 @app.route("/tv/input/mouse", methods=["POST"])
 def tv_input_mouse():
-    """data: {type, x, y, button}. x/y — координаты в системе координат вкладки ТВ."""
     data = request.get_json(silent=True) or {}
     params = {
         "type": data.get("type", "mousePressed"),
@@ -442,7 +443,6 @@ def tv_input_mouse():
 
 @app.route("/tv/input/key", methods=["POST"])
 def tv_input_key():
-    """data: {type, key, code, text}. Клавиатурный ввод сотрудника в вкладку ТВ."""
     data = request.get_json(silent=True) or {}
     params = {
         "type": data.get("type", "keyDown"),
@@ -454,8 +454,32 @@ def tv_input_key():
     return {"ok": ok}, (200 if ok else 502)
 
 
+# --- Определение текущего URL вкладки ТВ (для фонового видео логотипа) --
+# Фоновое видео логотипа лаборатории показывается в области "Управление
+# киоском" только когда ТВ реально на дашборде (никто не открыл рутуб/
+YouTube/Яндекс.Музыку кнопкой-ярлыком). Различаем это по URL вкладки,
+# полученному через тот же CDP /json, что уже используется для навигации
+# и медиа-клавиш.
+
+def tv_active_url_loop():
+    last_url = None
+    while True:
+        try:
+            tabs = _requests.get(f"http://{CDP_HOST}:{CDP_PORT}/json", timeout=3).json()
+            pages = [t for t in tabs if t.get("type") == "page"]
+            url = pages[0].get("url", "") if pages else ""
+        except Exception:
+            url = ""
+        if url != last_url:
+            last_url = url
+            is_dashboard = url.startswith("http://localhost:5000")
+            socketio.emit("tv_active_state", {"url": url, "is_dashboard": is_dashboard})
+        socketio.sleep(2)
+
+
 if __name__ == "__main__":
     SLIDESHOW_DIR.mkdir(exist_ok=True)
     socketio.start_background_task(sensor_loop)
     socketio.start_background_task(photoframe_loop)
+    socketio.start_background_task(tv_active_url_loop)
     socketio.run(app, host="127.0.0.1", port=5000)
