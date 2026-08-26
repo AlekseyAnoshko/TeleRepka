@@ -66,20 +66,26 @@
     .media-link.youtube { background: #2065d1; color: #ffffff; }
     .media-link.yandex-music { background: #e8302f; color: #ffffff; }
     .media-link.tv-home { background: transparent; border: 1px solid var(--border); color: var(--muted); }
-    .remote-row { display: flex; gap: 8px; margin-top: 9px; }
-    .remote-btn {
-      flex: 1; padding: 10px 0; font-size: 18px; cursor: pointer;
-      background: var(--panel); color: var(--text);
-      border: 1px solid var(--border); border-radius: 9px;
-      transition: filter 0.15s ease, transform 0.15s ease;
-    }
-    .remote-btn:hover { filter: brightness(1.3); transform: translateY(-1px); }
-    .remote-btn:active { transform: translateY(0); filter: brightness(0.9); }
     .header-brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
-    .header-logo { width: 48px; height: 48px; flex-shrink: 0; object-fit: contain; }
+    .header-logo { width: 48px; height: 48px; flex-shrink: 0; object-fit: contain; cursor: pointer; }
     main.stage {
-      display: grid; gap: 12px; padding: 12px; overflow: hidden;
+      display: flex; flex-direction: column; gap: 8px; padding: 12px; overflow: hidden;
       background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    }
+    .stage-tabs { display: flex; gap: 8px; flex-shrink: 0; }
+    .stage-tab {
+      padding: 6px 14px; border-radius: 7px; font-size: 13px; cursor: pointer;
+      border: 1px solid var(--border); background: transparent; color: var(--muted);
+    }
+    .stage-tab.active { background: var(--accent); color: #0d1117; border-color: var(--accent); }
+    .stage-view { flex: 1; position: relative; display: none; min-height: 0; }
+    .stage-view.active { display: block; }
+    #tv-screen-wrap { position: relative; width: 100%; height: 100%; background: #000; border-radius: 10px; overflow: hidden; }
+    #tv-screen { width: 100%; height: 100%; object-fit: contain; cursor: pointer; outline: none; display: none; }
+    #tv-screen-placeholder {
+      position: absolute; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 8px;
+      color: var(--muted); font-size: 18px; text-align: center;
     }
     #video-grid { display: grid; height: 100%; gap: 12px; grid-auto-rows: 1fr; }
     .video-tile { position: relative; overflow: hidden; background: #000; border: 1px solid var(--border); border-radius: 10px; }
@@ -87,20 +93,13 @@
     .video-tile .name-tag { position: absolute; bottom: 8px; left: 8px; padding: 4px 10px; background: rgba(0, 0, 0, 0.6); border-radius: 6px; font-size: 13px; }
     #placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 8px; color: var(--muted); font-size: 18px; text-align: center; }
     #placeholder .hint { color: var(--muted); font-size: 14px; }
-    body.broadcast-active #app { display: block; padding: 0; }
-    body.broadcast-active header, body.broadcast-active aside { display: none; }
-    body.broadcast-active main.stage { position: fixed; inset: 0; display: block; padding: 0; background: #000; border: 0; border-radius: 0; }
-    body.broadcast-active #video-grid { width: 100vw; height: 100vh; gap: 0; }
-    body.broadcast-active .video-tile { border: 0; border-radius: 0; }
-    body.broadcast-active .video-tile video { width: 100%; height: 100%; object-fit: contain; }
-    body.broadcast-active .video-tile .name-tag { bottom: 18px; left: 18px; font-size: 18px; }
   </style>
 </head>
 <body>
   <div id="app">
     <header>
       <div class="header-brand">
-        <img src="/static/logo-lab-72.png" alt="" class="header-logo">
+        <img id="lab-logo" src="/static/logo-lab-72.png" alt="" class="header-logo" title="Разбудить ТВ">
         <h1>Repka Pi Lab Hub</h1>
       </div>
       <div id="clock">--:--:--</div>
@@ -141,31 +140,36 @@
       </div>
 
       <div class="panel media-panel">
-        <h2>Медиа на ТВ</h2>
+        <h2>Медиа на ТВ (быстрые ярлыки)</h2>
         <a id="btn-rutube" class="media-link rutube" href="javascript:void(0)" data-url="https://rutube.ru/">RuTube</a>
         <a id="btn-youtube" class="media-link youtube" href="javascript:void(0)" data-url="https://www.youtube.com/">YouTube</a>
         <a id="btn-yandex-music" class="media-link yandex-music" href="javascript:void(0)" data-url="https://music.yandex.ru/">Яндекс.Музыка</a>
-
-        <div class="remote-row">
-          <button class="remote-btn" data-action="prev" title="Предыдущий трек">⏮</button>
-          <button class="remote-btn" data-action="play_pause" title="Play/Пауза">⏯</button>
-          <button class="remote-btn" data-action="next" title="Следующий трек">⏭</button>
-        </div>
-        <div class="remote-row">
-          <button class="remote-btn" data-action="vol_down" title="Тише">🔉</button>
-          <button class="remote-btn" data-action="mute" title="Без звука">🔇</button>
-          <button class="remote-btn" data-action="vol_up" title="Громче">🔊</button>
-        </div>
-
         <a id="btn-tv-home" class="media-link tv-home" href="javascript:void(0)">Вернуть дашборд на ТВ</a>
       </div>
     </aside>
 
     <main class="stage">
-      <div id="video-grid"></div>
-      <div id="placeholder">
-        Нет активных трансляций
-        <div class="hint">Ожидание подключения с рабочих мест сотрудников…</div>
+      <div class="stage-tabs">
+        <button class="stage-tab active" data-tab="control">Управление киоском</button>
+        <button class="stage-tab" data-tab="broadcast">Трансляция с рабочих мест</button>
+      </div>
+
+      <div class="stage-view active" id="view-control">
+        <div id="tv-screen-wrap">
+          <img id="tv-screen" tabindex="0">
+          <div id="tv-screen-placeholder">
+            Подключение к экрану ТВ…
+            <div class="hint" style="font-size:14px;">Кликните по видео, чтобы управлять киоском мышью и клавиатурой</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage-view" id="view-broadcast">
+        <div id="video-grid"></div>
+        <div id="placeholder">
+          Нет активных трансляций
+          <div class="hint">Ожидание подключения с рабочих мест сотрудников…</div>
+        </div>
       </div>
     </main>
   </div>
@@ -186,9 +190,6 @@
       document.getElementById('s-co2').textContent = data.co2 != null ? Math.round(data.co2) : '—';
     });
 
-    // Статус фоторамок. IP из подсети 10.42.0.x напрямую недоступен снаружи,
-    // поэтому ссылка ведёт через app.py reverse-proxy на Repka Pi —
-    // см. пояснение в шапке app.py и в photoframes.py (find_ip_by_name, proxy_request).
     socket.on('photoframe_status', function (frames) {
       const list = document.getElementById('frame-list');
       list.innerHTML = '';
@@ -206,12 +207,15 @@
       });
     });
 
-    // --- Определяем, является ли этот открытый экземпляр страницы настоящим ТВ ---
-    // У телевизора нет клавиатуры/мышки — все действия выполняет сотрудник,
-    // открыв тот же https://telerepka-k207.istu.int/ на своём компьютере.
-    // Настоящий Chromium-kiosk на Repka Pi запускается с ?kiosk=1 в адресе
-    // (см. lab-hub-kiosk.service) — только он регистрируется как ТВ и
-    // выполняет переходы по ссылкам медиасервисов.
+    document.querySelectorAll('.stage-tab').forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        document.querySelectorAll('.stage-tab').forEach(function (t) { t.classList.remove('active'); });
+        document.querySelectorAll('.stage-view').forEach(function (v) { v.classList.remove('active'); });
+        tab.classList.add('active');
+        document.getElementById('view-' + tab.dataset.tab).classList.add('active');
+      });
+    });
+
     const params = new URLSearchParams(window.location.search);
     const isTvKiosk = params.get('kiosk') === '1';
 
@@ -219,9 +223,6 @@
       if (isTvKiosk) socket.emit('tv-join');
     });
 
-    // Клик по кнопке медиасервиса — на любом экземпляре страницы (в т.ч. у
-    // сотрудника) не переходит по ссылке сам, а просит сервер переслать
-    // команду настоящему ТВ.
     document.querySelectorAll('.media-link[data-url]').forEach(function (btn) {
       btn.addEventListener('click', function (e) {
         e.preventDefault();
@@ -229,18 +230,12 @@
       });
     });
 
-    // Только настоящий ТВ выполняет переход по полученному URL.
     socket.on('open-url-on-tv', function (data) {
       if (isTvKiosk && data && data.url) {
         window.location.href = data.url;
       }
     });
 
-    // --- Пульт ТВ: "Вернуть дашборд" и play/pause/next/prev/volume ---------
-    // Эти команды идут не через Socket.IO, а через простой HTTP POST на
-    // сервер, который управляет вкладкой ТВ снаружи через CDP (Chrome
-    // DevTools Protocol) — это работает даже если ТВ сейчас открыт на
-    // RuTube/YouTube/Яндекс.Музыке и не слушает наш JS/Socket.IO.
     document.getElementById('btn-tv-home').addEventListener('click', function () {
       fetch('/tv/go-home', { method: 'POST' })
         .then(function (r) { return r.json(); })
@@ -250,22 +245,70 @@
         .catch(function () { alert('Не удалось связаться с сервером.'); });
     });
 
-    document.querySelectorAll('.remote-btn[data-action]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        fetch('/tv/media', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: btn.dataset.action })
-        })
-          .then(function (r) { return r.json(); })
-          .then(function (data) {
-            if (!data.ok) console.warn('Команда пульта не выполнена:', btn.dataset.action);
-          })
-          .catch(function () { console.warn('Не удалось связаться с сервером.'); });
-      });
+    const tvScreen = document.getElementById('tv-screen');
+    const tvPlaceholder = document.getElementById('tv-screen-placeholder');
+
+    fetch('/tv/screencast/start', { method: 'POST' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data.ok) tvPlaceholder.textContent = 'Не удалось подключиться к экрану ТВ.';
+      })
+      .catch(function () { tvPlaceholder.textContent = 'Не удалось связаться с сервером.'; });
+
+    socket.on('tv_screencast_frame', function (data) {
+      if (!data || !data.jpeg) return;
+      tvScreen.src = 'data:image/jpeg;base64,' + data.jpeg;
+      if (tvScreen.style.display === 'none') {
+        tvScreen.style.display = 'block';
+        tvPlaceholder.style.display = 'none';
+      }
     });
 
-    // --- WebRTC: приём трансляции с рабочих мест сотрудников -----------------
+    function mapToTvCoords(evt) {
+      const rect = tvScreen.getBoundingClientRect();
+      const scaleX = tvScreen.naturalWidth / rect.width;
+      const scaleY = tvScreen.naturalHeight / rect.height;
+      return {
+        x: Math.round((evt.clientX - rect.left) * scaleX),
+        y: Math.round((evt.clientY - rect.top) * scaleY),
+      };
+    }
+
+    function sendMouse(type, evt) {
+      const c = mapToTvCoords(evt);
+      fetch('/tv/input/mouse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: type, x: c.x, y: c.y, button: 'left' }),
+      }).catch(function () {});
+    }
+
+    tvScreen.addEventListener('mousedown', function (e) { sendMouse('mousePressed', e); tvScreen.focus(); });
+    tvScreen.addEventListener('mouseup', function (e) { sendMouse('mouseReleased', e); });
+    tvScreen.addEventListener('mousemove', function (e) { sendMouse('mouseMoved', e); });
+    tvScreen.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+    tvScreen.addEventListener('keydown', function (e) {
+      e.preventDefault();
+      fetch('/tv/input/key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'keyDown', key: e.key, code: e.code, text: e.key.length === 1 ? e.key : '' }),
+      }).catch(function () {});
+    });
+    tvScreen.addEventListener('keyup', function (e) {
+      e.preventDefault();
+      fetch('/tv/input/key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'keyUp', key: e.key, code: e.code }),
+      }).catch(function () {});
+    });
+
+    window.addEventListener('beforeunload', function () {
+      fetch('/tv/screencast/stop', { method: 'POST' });
+    });
+
     const ICE_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
     const peers = {};
     const videoGrid = document.getElementById('video-grid');
@@ -273,8 +316,6 @@
 
     function updateGridLayout() {
       const n = Object.keys(peers).length;
-      // Полноэкранный режим на ТВ, когда идёт хотя бы одна трансляция по HDMI.
-      document.body.classList.toggle('broadcast-active', n > 0);
       if (n === 0) {
         placeholder.style.display = 'flex';
         videoGrid.style.gridTemplateColumns = '1fr';
@@ -291,7 +332,6 @@
       tile.id = 'tile-' + sid;
       tile.innerHTML = '<video autoplay playsinline></video><div class="name-tag">' + name + '</div>';
       videoGrid.appendChild(tile);
-      document.body.classList.add('broadcast-active');
       updateGridLayout();
       return tile.querySelector('video');
     }
@@ -299,7 +339,6 @@
     function removeTile(sid) {
       const tile = document.getElementById('tile-' + sid);
       if (tile) tile.remove();
-      if (Object.keys(peers).length === 0) document.body.classList.remove('broadcast-active');
       updateGridLayout();
     }
 

@@ -7,48 +7,23 @@ Repka Pi Lab Hub — центральный веб-сервис лаборато
 - "/broadcast" — страница сотрудника: трансляция экрана/камеры на ТВ (WebRTC)
 - "/slideshow.jpg" — раздача следующего слайда для ESP32 PhotoFrame
 - "/photoframe/<name>/<subpath>" — reverse-proxy на веб-интерфейс
-  конкретной фоторамки (см. ниже, почему это нужно)
+  конкретной фоторамки
 
-Почему нужен reverse-proxy для рамок: сама рамка живёт в подсети Wi-Fi
-хотспота Repka Pi (10.42.0.x) — эта подсеть недоступна снаружи (из сети
-университета, с обычного Wi-Fi ноутбука сотрудника и т.п.), там просто
-нет маршрута. Раньше страница отдавала прямую ссылку вида http://10.42.0.101/,
-которая работала только для устройств, физически подключённых к хотспоту
-рамки. Теперь вместо прямой ссылки используется /photoframe/<имя>/ —
-запрос до рамки выполняет сам процесс app.py (он и есть шлюз хотспота,
-у него есть маршрут в 10.42.0.0/24), а результат отдаётся браузеру через
-уже работающий домен telerepka-k207.istu.int, куда маршрут есть у всех.
+Управление ТВ без клавиатуры/мыши: все действия выполняет сотрудник, открыв тот же
+адрес https://telerepka-k207.istu.int/ на своём компьютере. Кнопки RuTube/
+ YouTube/Яндекс.Музыки и «Вернуть дашборд на ТВ» — быстрые ярлыки: шлют
+команду серверу (open-url-on-tv через Socket.IO / HTTP на /tv/go-home), который
+управляет вкладкой ТВ через Chrome DevTools Protocol (CDP, порт 9222, см.
+lab-hub-kiosk.service).
 
-Управление ТВ без клавиатуры/мыши: у телевизора лаборатории нет ввода —
-все действия выполняет сотрудник, открыв тот же адрес
-https://telerepka-k207.istu.int/ на своём компьютере. Значит "/" одновременно
-открыта в двух ролях: как немой Chromium-kiosk на самой Repka Pi (подключён
-к ТВ по HDMI, запускается через ?kiosk=1 в URL — см. lab-hub-kiosk.service)
-и как интерактивная копия у сотрудника. Кнопки RuTube/YouTube/Яндекс.Музыки
-поэтому не переходят по ссылке сами, а шлют команду open-url-on-tv через
-Socket.IO — реальный переход по URL выполняет только тот клиент, который
-зарегистрировался как настоящий ТВ (tv-join), то есть Chromium с ?kiosk=1.
+Полноценное интерактивное управление экраном ТВ — через CDP Screencast:
+сервер держит одно постоянное CDP-соединение (класс ScreencastSession),
+получает поток JPEG-кадров вкладки (Page.startScreencast) и ретранслирует
+их всем подключённым браузерам сотрудников через Socket.IO. Клики/нажатия
+сотрудника идут в обратную сторону через Input.dispatchMouseEvent/dispatchKeyEvent.
 
-Возврат на дашборд и управление плеером (play/pause/next/prev/volume) не
-могут идти через Socket.IO: после перехода на RuTube/YouTube/Яндекс.Музыку
-страница index.html выгружается из вкладки целиком, вместе с ней умирает
-JS и Socket.IO-соединение — слушать команду там уже некому. Поэтому обеими
-функциями управляем СНАРУЖИ вкладки через Chrome DevTools Protocol (CDP):
-Chromium на ТВ запускается с --remote-debugging-port=9222 (см.
-lab-hub-kiosk.service), а сервер отправляет туда команды Page.navigate
-(вернуть дашборд) и Input.dispatchKeyEvent (эмуляция медиа-клавиш) прямо
-по WebSocket, независимо от того, какой сайт открыт в вкладке сейчас.
-
-Запуск: python3 app.py
-Слушает 127.0.0.1:5000 по HTTP. TLS-терминацию и единую точку входа
-(80 и 443, домен telerepka-k207.istu.int) обеспечивает nginx перед этим
-процессом — см. nginx_telerepka.conf.
-
-Примечание про шум в логах: в сетях с периодическими сканерами/ботами
-(например, в сети университета) возможны единичные трассировки вида
-"SSLError: [SSL: SSLV3_ALERT_CERTIFICATE_UNKNOWN]" — это безобидно, клиент
-просто отклоняет самоподписанный сертификат без взаимодействия с
-пользователем. Такие трассировки приглушаются через hub_exceptions(False).
+Запуск: python3 app.py. Слушает 127.0.0.1:5000 по HTTP, TLS и единая точка
+входа — через nginx (см. nginx_telerepka.conf).
 """
 import eventlet
 eventlet.monkey_patch()
@@ -93,19 +68,14 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("LAB_HUB_SECRET", "change-me")
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 
-# Подключённые HDMI-приёмники (Chromium kiosk на Repka Pi, страница "/" с ?kiosk=1).
 tv_clients: set[str] = set()
 
-# Домены, на которые разрешено удалённо переключать ТВ кнопками медиасервисов.
-# Без этого белого списка любой, кто достучится до Socket.IO-эндпоинта,
-# мог бы заставить киоск открыть произвольную страницу.
 ALLOWED_MEDIA_PREFIXES = (
     "https://rutube.ru",
     "https://www.youtube.com",
     "https://music.yandex.ru",
 )
 
-# --- HTTP routes: главная панель и трансляция ---------------------------
 
 @app.route("/")
 def index():
@@ -118,11 +88,6 @@ def broadcast_page():
     """Страница сотрудника: трансляция экрана/камеры и звука на ТВ."""
     return render_template("broadcast.html")
 
-
-# --- HTTP route: reverse-proxy на веб-интерфейс фоторамки ---------------
-# Ссылки на страницу конкретной рамки в шаблонах должны указывать сюда
-# (/photoframe/<имя>/), а не на её реальный IP в подсети 10.42.0.x —
-# см. пояснение в шапке файла и в photoframes.py.
 
 @app.route("/photoframe/<name>/", defaults={"subpath": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 @app.route("/photoframe/<name>/<path:subpath>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
@@ -148,14 +113,6 @@ def photoframe_proxy(name: str, subpath: str):
     return Response(upstream.content, upstream.status_code, response_headers)
 
 
-# --- HTTP route: слайд-шоу для ESP32 PhotoFrame --------------------------
-# Перенесено из slideshow_server.py (был отдельным процессом на порту 5001).
-# Прошивка рамки не умеет смотреть в сетевой каталог напрямую — она лишь
-# периодически скачивает один и тот же URL, указанный в image_url (см.
-# rotation_mode=url в docs/API.md репозитория esp32-photoframe). Этот
-# маршрут отдаёт на каждый запрос следующее по очереди изображение из
-# SLIDESHOW_DIR, так что каждый плановый опрос рамки сдвигает слайд вперёд.
-
 SLIDESHOW_DIR = BASE_DIR / "pic_aaf"
 ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".bmp"}
 
@@ -165,9 +122,6 @@ _slideshow_files_snapshot: list[Path] = []
 
 
 def _refresh_slideshow_cycle() -> None:
-    """Перечитывает папку и пересоздаёт бесконечный циклический итератор,
-    если состав файлов изменился (можно добавлять/удалять картинки без
-    перезапуска сервера)."""
     global _slideshow_cycle, _slideshow_files_snapshot
     files = sorted(
         p for p in SLIDESHOW_DIR.iterdir()
@@ -188,8 +142,6 @@ def slideshow():
     return send_file(next_file)
 
 
-# --- Датчики: фоновый поток публикует показания всем подключённым клиентам
-
 def sensor_loop():
     while True:
         try:
@@ -200,8 +152,6 @@ def sensor_loop():
         socketio.sleep(config["sensor_poll_interval_sec"])
 
 
-# --- Фоторамки: фоновый поток опрашивает REST API каждой рамки
-
 def photoframe_loop():
     while True:
         statuses = [photoframes.poll(f["name"], f["ip"]) for f in config["photoframes"]]
@@ -211,20 +161,12 @@ def photoframe_loop():
 
 @socketio.on("connect")
 def on_connect():
-    # Новому клиенту (например, ТВ после перезагрузки) сразу отдаём последние показания
     emit("sensor_data", sensors.read_all())
 
 
-# --- WebRTC-сигнализация -------------------------------------------------
-# ТВ-страница входит в комнату "tv". У каждого клиента Socket.IO автоматически
-# есть персональная комната с именем, равным его sid — этим пользуемся для
-# адресной пересылки offer/answer/ICE конкретному сотруднику.
-
 @socketio.on("tv-join")
 def tv_join():
-    """Регистрируем Chromium-киоск как готовый HDMI-приёмник.
-    Вызывается только настоящим ТВ (страница "/" открыта с ?kiosk=1) —
-    обычная копия "/" в браузере сотрудника этот эвент не шлёт."""
+    """Вызывается только настоящим ТВ (страница "/" открыта с ?kiosk=1)."""
     tv_clients.add(request.sid)
     join_room("tv")
     socketio.emit("tv-status", {"ready": True})
@@ -232,7 +174,6 @@ def tv_join():
 
 @socketio.on("tv-ready-check")
 def tv_ready_check():
-    """Отдаём сотруднику состояние HDMI-приёмника."""
     emit("tv-status", {"ready": bool(tv_clients)})
 
 
@@ -245,7 +186,6 @@ def on_disconnect():
 
 @socketio.on("broadcaster-offer")
 def broadcaster_offer(data):
-    """data: {name, sdp}. Пересылаем предложение в комнату ТВ вместе с sid отправителя."""
     emit(
         "broadcaster-offer",
         {"sid": request.sid, "name": data["name"], "sdp": data["sdp"]},
@@ -255,14 +195,11 @@ def broadcaster_offer(data):
 
 @socketio.on("tv-answer")
 def tv_answer(data):
-    """data: {target_sid, sdp}. Ответ ТВ конкретному сотруднику по его sid."""
     emit("tv-answer", {"sdp": data["sdp"]}, room=data["target_sid"])
 
 
 @socketio.on("ice-candidate")
 def ice_candidate(data):
-    """data: {target_sid, candidate}. Пересылка ICE-кандидатов в обе стороны.
-    Сотрудник указывает target_sid="tv" (комната), ТВ — конкретный sid сотрудника."""
     emit(
         "ice-candidate",
         {"sid": request.sid, "candidate": data["candidate"]},
@@ -275,38 +212,20 @@ def broadcaster_stop():
     emit("broadcaster-stop", {"sid": request.sid}, room="tv")
 
 
-# --- Удалённое переключение ТВ на RuTube / YouTube / Яндекс.Музыку ------
-# У телевизора нет клавиатуры/мышки: все действия выполняет сотрудник,
-# открыв тот же https://telerepka-k207.istu.int/ на своём компьютере.
-# Поэтому кнопки медиасервисов на "/" не открывают ссылку в браузере
-# кликающего, а шлют это событие — реальный переход выполняет только
-# клиент, зарегистрированный как ТВ через tv-join (room "tv").
-
 @socketio.on("open-url-on-tv")
 def open_url_on_tv(data):
-    """data: {url}. Проверяем URL по белому списку и пересылаем в комнату "tv"."""
+    """data: {url}. Белый список + пересылка в комнату "tv"."""
     url = (data or {}).get("url", "")
     if not url.startswith(ALLOWED_MEDIA_PREFIXES):
         return
     emit("open-url-on-tv", {"url": url}, room="tv")
 
 
-# --- Управление вкладкой ТВ через Chrome DevTools Protocol (CDP) --------
-# После перехода на RuTube/YouTube/Яндекс.Музыку страница index.html
-# выгружается из вкладки — вместе с ней умирает Socket.IO-соединение,
-# слушать команду там уже некому. Поэтому навигацией "назад на дашборд"
-# и управлением плеером (play/pause/next/prev/volume) управляем СНАРУЖИ
-# вкладки через CDP: Chromium на ТВ запускается с
-# --remote-debugging-port=9222 (см. lab-hub-kiosk.service), а сюда сервер
-# посылает команды Page.navigate / Input.dispatchKeyEvent по WebSocket —
-# это работает независимо от того, какой сайт открыт в вкладке сейчас.
-
 CDP_HOST = "127.0.0.1"
 CDP_PORT = 9222
 DASHBOARD_URL = "http://localhost:5000/?kiosk=1"
 
 MEDIA_KEY_CODES = {
-    # action -> (code, windowsVirtualKeyCode), см. CDP Input.dispatchKeyEvent
     "play_pause": ("MediaPlayPause", 179),
     "next":       ("MediaTrackNext", 176),
     "prev":       ("MediaTrackPrevious", 177),
@@ -317,8 +236,7 @@ MEDIA_KEY_CODES = {
 
 
 def _cdp_tab_ws_url():
-    """Возвращает webSocketDebuggerUrl единственной вкладки Chromium-kiosk
-    (в kiosk-режиме вкладка всегда одна) или None, если CDP недоступен."""
+    """webSocketDebuggerUrl единственной вкладки Chromium-kiosk или None."""
     try:
         tabs = _requests.get(f"http://{CDP_HOST}:{CDP_PORT}/json", timeout=3).json()
     except Exception:
@@ -342,8 +260,6 @@ def _cdp_send(ws_url: str, method: str, params: dict) -> bool:
 
 
 def _cdp_navigate(url: str) -> bool:
-    """Отправляет вкладке ТВ команду Page.navigate — работает даже если
-    вкладка сейчас открыта на чужом сайте (RuTube/YouTube)."""
     ws_url = _cdp_tab_ws_url()
     if not ws_url:
         return False
@@ -351,9 +267,6 @@ def _cdp_navigate(url: str) -> bool:
 
 
 def _cdp_media_key(action: str) -> bool:
-    """Эмулирует нажатие медиа-клавиши во вкладке ТВ. YouTube, Яндекс.Музыка
-    и большинство современных плееров слушают такие клавиши через Media
-    Session API — работает независимо от того, какой сервис сейчас открыт."""
     if action not in MEDIA_KEY_CODES:
         return False
     code, vk = MEDIA_KEY_CODES[action]
@@ -368,19 +281,176 @@ def _cdp_media_key(action: str) -> bool:
 
 @app.route("/tv/go-home", methods=["POST"])
 def tv_go_home_http():
-    """Кнопка «Вернуть дашборд на ТВ». HTTP, а не Socket.IO — потому что
-    вкладка ТВ может быть открыта на чужом сайте и не слушать наш JS."""
+    """Кнопка «Вернуть дашборд на ТВ» — быстрый ярлык через CDP Page.navigate."""
     ok = _cdp_navigate(DASHBOARD_URL)
     return {"ok": ok}, (200 if ok else 502)
 
 
 @app.route("/tv/media", methods=["POST"])
 def tv_media_control():
-    """Пульт сотрудника: play_pause / next / prev / vol_up / vol_down / mute.
-    Кнопки пульта на странице "/" не открывают настоящий сайт медиасервиса
-    у сотрудника — они управляют уже открытым плеером на ТВ через CDP."""
+    """play_pause/next/prev/vol_up/vol_down/mute через CDP-медиаклавиши (API сохранён, кнопки пульта в UI убраны)."""
     action = (request.get_json(silent=True) or {}).get("action", "")
     ok = _cdp_media_key(action)
+    return {"ok": ok}, (200 if ok else 502)
+
+
+class ScreencastSession:
+    """Держит одно долгоживущее CDP-соединение с вкладкой ТВ, пересылает
+    кадры всем подключённым клиентам через Socket.IO, обслуживает команды
+    мыши/клавиатуры. Общий singleton — вкладка ТВ всегда одна (kiosk)."""
+
+    def __init__(self):
+        self._ws = None
+        self._lock = threading.Lock()
+        self._running = False
+        self._msg_id = 1000
+        self._viewers = 0
+
+    def _next_id(self) -> int:
+        self._msg_id += 1
+        return self._msg_id
+
+    def add_viewer(self) -> bool:
+        with self._lock:
+            self._viewers += 1
+        return self._ensure_started()
+
+    def remove_viewer(self):
+        with self._lock:
+            self._viewers = max(0, self._viewers - 1)
+            should_stop = self._viewers == 0
+        if should_stop:
+            self._stop_locked()
+
+    def _ensure_started(self) -> bool:
+        with self._lock:
+            if self._running:
+                return True
+            try:
+                import websocket
+                ws_url = _cdp_tab_ws_url()
+                if not ws_url:
+                    return False
+                ws = websocket.create_connection(ws_url, timeout=5)
+                ws.send(json.dumps({
+                    "id": self._next_id(),
+                    "method": "Page.startScreencast",
+                    "params": {
+                        "format": "jpeg", "quality": 60,
+                        "maxWidth": 1280, "maxHeight": 720, "everyNthFrame": 1,
+                    },
+                }))
+            except Exception:
+                return False
+            self._ws = ws
+            self._running = True
+        socketio.start_background_task(self._read_loop)
+        return True
+
+    def _stop_locked(self):
+        with self._lock:
+            if self._ws is not None:
+                try:
+                    self._ws.send(json.dumps({"id": self._next_id(), "method": "Page.stopScreencast"}))
+                    self._ws.close()
+                except Exception:
+                    pass
+            self._ws = None
+            self._running = False
+
+    def _read_loop(self):
+        while True:
+            with self._lock:
+                ws = self._ws
+                running = self._running
+            if not running or ws is None:
+                break
+            try:
+                raw = ws.recv()
+            except Exception:
+                break
+            if not raw:
+                continue
+            try:
+                msg = json.loads(raw)
+            except Exception:
+                continue
+            if msg.get("method") == "Page.screencastFrame":
+                params = msg.get("params", {})
+                data = params.get("data")
+                session_id = params.get("sessionId")
+                if data:
+                    socketio.emit("tv_screencast_frame", {"jpeg": data})
+                if session_id is not None:
+                    try:
+                        ws.send(json.dumps({
+                            "id": self._next_id(),
+                            "method": "Page.screencastFrameAck",
+                            "params": {"sessionId": session_id},
+                        }))
+                    except Exception:
+                        break
+        with self._lock:
+            self._running = False
+            self._ws = None
+
+    def send_input(self, method: str, params: dict) -> bool:
+        with self._lock:
+            ws = self._ws
+        if ws is None:
+            return False
+        try:
+            ws.send(json.dumps({"id": self._next_id(), "method": method, "params": params}))
+            return True
+        except Exception:
+            return False
+
+
+_screencast = ScreencastSession()
+
+
+@app.route("/tv/screencast/start", methods=["POST"])
+def screencast_start():
+    """Сотрудник открыл дашборд — подключаемся (или переиспользуем уже идущий)
+    к потоку экрана ТВ. Несколько одновременных зрителей — норма."""
+    ok = _screencast.add_viewer()
+    return {"ok": ok}, (200 if ok else 502)
+
+
+@app.route("/tv/screencast/stop", methods=["POST"])
+def screencast_stop():
+    """Сотрудник закрыл вкладку/ушёл со страницы. Останавливается только
+    когда ушли все зрители."""
+    _screencast.remove_viewer()
+    return {"ok": True}
+
+
+@app.route("/tv/input/mouse", methods=["POST"])
+def tv_input_mouse():
+    """data: {type, x, y, button}. x/y — координаты в системе координат вкладки ТВ."""
+    data = request.get_json(silent=True) or {}
+    params = {
+        "type": data.get("type", "mousePressed"),
+        "x": data.get("x", 0),
+        "y": data.get("y", 0),
+        "button": data.get("button", "left"),
+        "clickCount": 1,
+    }
+    ok = _screencast.send_input("Input.dispatchMouseEvent", params)
+    return {"ok": ok}, (200 if ok else 502)
+
+
+@app.route("/tv/input/key", methods=["POST"])
+def tv_input_key():
+    """data: {type, key, code, text}. Клавиатурный ввод сотрудника в вкладку ТВ."""
+    data = request.get_json(silent=True) or {}
+    params = {
+        "type": data.get("type", "keyDown"),
+        "key": data.get("key", ""),
+        "code": data.get("code", ""),
+        "text": data.get("text", ""),
+    }
+    ok = _screencast.send_input("Input.dispatchKeyEvent", params)
     return {"ok": ok}, (200 if ok else 502)
 
 
@@ -388,7 +458,4 @@ if __name__ == "__main__":
     SLIDESHOW_DIR.mkdir(exist_ok=True)
     socketio.start_background_task(sensor_loop)
     socketio.start_background_task(photoframe_loop)
-
-    # TLS теперь только в nginx (см. nginx_telerepka.conf), поэтому Flask
-    # слушает исключительно loopback — снаружи процесс недостижим напрямую.
     socketio.run(app, host="127.0.0.1", port=5000)
