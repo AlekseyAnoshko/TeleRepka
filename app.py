@@ -24,9 +24,9 @@ lab-hub-kiosk.service).
 
 Фоновое видео логотипа: когда ТВ показывает сам дашборд (никто не открыл
 RuTube/YouTube/Яндекс.Музыку) и нет WebRTC-трансляции с рабочих мест, в
-области "Управление киоском" вместо живого CDP-скриншота (это была бы
-rekursiya — дашборд внутри дашборда) крутится /static/video-logo-lab.mp4.
-Различение состояния идёт по URL вкладки ТВ через tv_active_url_loop.
+области "Управление киоском" вместо живого CDP-скриншота крутится
+/static/video-logo-lab.mp4. Различение состояния идёт по URL вкладки ТВ
+через tv_active_url_loop.
 
 Запуск: python3 app.py. Слушает 127.0.0.1:5000 по HTTP, TLS и единая точка
 входа — через nginx (см. nginx_telerepka.conf).
@@ -172,7 +172,6 @@ def on_connect():
 
 @socketio.on("tv-join")
 def tv_join():
-    """Вызывается только настоящим ТВ (страница "/" открыта с ?kiosk=1)."""
     tv_clients.add(request.sid)
     join_room("tv")
     socketio.emit("tv-status", {"ready": True})
@@ -220,7 +219,6 @@ def broadcaster_stop():
 
 @socketio.on("open-url-on-tv")
 def open_url_on_tv(data):
-    """data: {url}. Белый список + пересылка в комнату "tv"."""
     url = (data or {}).get("url", "")
     if not url.startswith(ALLOWED_MEDIA_PREFIXES):
         return
@@ -242,7 +240,6 @@ MEDIA_KEY_CODES = {
 
 
 def _cdp_tab_ws_url():
-    """webSocketDebuggerUrl единственной вкладки Chromium-kiosk или None."""
     try:
         tabs = _requests.get(f"http://{CDP_HOST}:{CDP_PORT}/json", timeout=3).json()
     except Exception:
@@ -287,24 +284,18 @@ def _cdp_media_key(action: str) -> bool:
 
 @app.route("/tv/go-home", methods=["POST"])
 def tv_go_home_http():
-    """Кнопка «Вернуть дашборд на ТВ» — быстрый ярлык через CDP Page.navigate."""
     ok = _cdp_navigate(DASHBOARD_URL)
     return {"ok": ok}, (200 if ok else 502)
 
 
 @app.route("/tv/media", methods=["POST"])
 def tv_media_control():
-    """play_pause/next/prev/vol_up/vol_down/mute через CDP-медиаклавиши."""
     action = (request.get_json(silent=True) or {}).get("action", "")
     ok = _cdp_media_key(action)
     return {"ok": ok}, (200 if ok else 502)
 
 
 class ScreencastSession:
-    """Держит одно долгоживущее CDP-соединение с вкладкой ТВ, пересылает
-    кадры всем подключённым клиентам через Socket.IO, обслуживает команды
-    мыши/клавиатуры. Общий singleton — вкладка ТВ всегда одна (kiosk)."""
-
     def __init__(self):
         self._ws = None
         self._lock = threading.Lock()
@@ -453,13 +444,6 @@ def tv_input_key():
     ok = _screencast.send_input("Input.dispatchKeyEvent", params)
     return {"ok": ok}, (200 if ok else 502)
 
-
-# --- Определение текущего URL вкладки ТВ (для фонового видео логотипа) --
-# Фоновое видео логотипа лаборатории показывается в области "Управление
-# киоском" только когда ТВ реально на дашборде (никто не открыл рутуб/
-YouTube/Яндекс.Музыку кнопкой-ярлыком). Различаем это по URL вкладки,
-# полученному через тот же CDP /json, что уже используется для навигации
-# и медиа-клавиш.
 
 def tv_active_url_loop():
     last_url = None
