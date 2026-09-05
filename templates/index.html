@@ -334,7 +334,7 @@ function removeTile(sid) {
   updateGridLayout();
 }
 
-socket.on('broadcaster-offer', async function (sid, name, sdp) {
+socket.on('broadcaster-offer', async function ({ sid, name, sdp }) {
   const pc = new RTCPeerConnection(ICE_SERVERS);
   peers[sid] = pc;
   const videoEl = addTile(sid, name);
@@ -356,7 +356,7 @@ socket.on('broadcaster-offer', async function (sid, name, sdp) {
   socket.emit('tv-answer', { target_sid: sid, sdp: answer });
 });
 
-socket.on('ice-candidate', async function (sid, candidate) {
+socket.on('ice-candidate', async function ({ sid, candidate }) {
   const pc = peers[sid];
   if (pc && candidate) {
     try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); }
@@ -364,7 +364,7 @@ socket.on('ice-candidate', async function (sid, candidate) {
   }
 });
 
-socket.on('broadcaster-stop', function (sid) {
+socket.on('broadcaster-stop', function ({ sid }) {
   if (peers[sid]) { peers[sid].close(); delete peers[sid]; }
   removeTile(sid);
 });
