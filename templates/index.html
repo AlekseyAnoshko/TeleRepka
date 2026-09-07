@@ -144,7 +144,7 @@ body.broadcast-active .video-tile .name-tag { bottom: 18px; left: 18px; font-siz
 </div>
 <script src="/static/socket.io.min.js"></script>
 <script>
-const socket = io();
+const socket = io({ transports: ['websocket'] });
 
 function tick() { document.getElementById('clock').textContent = new Date().toLocaleTimeString('ru-RU'); }
 setInterval(tick, 1000);
