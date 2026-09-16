@@ -26,7 +26,15 @@ lab-hub-kiosk.service).
 RuTube/YouTube/Яндекс.Музыку) и нет WebRTC-трансляции с рабочих мест, в
 области "Управление киоском" вместо живого CDP-скриншота крутится
 /static/video-logo-lab.mp4. Различение состояния идёт по URL вкладки ТВ
-через tv_active_url_loop.
+через tv_active_url_loop. Последнее известное состояние кешируется в
+_last_tv_active_state и рассылается новым клиентам сразу при подключении —
+иначе браузер, открытый уже после того, как URL ТВ перестал меняться, никогда
+не узнаёт, что на ТВ дашборд, и вместо idle-видео показывает live CDP-скриншот
+самого дашборда (баг с "рекурсивным" отображением страницы).
+
+Дополнительно: kiosk_ontop_watch_loop следит за появлением служебного окна
+"Дисплей" (xfce4-display-settings), которое Xfce всплывает при HDMI hotplug
+(включение/выключение ТВ), и закрывает его, чтобы оно не перекрывало киоск.
 
 Запуск: python3 app.py. Слушает 127.0.0.1:5000 по HTTP, TLS и единая точка
 входа — через nginx (см. nginx_telerepka.conf).
@@ -40,6 +48,7 @@ eventlet.debug.hub_exceptions(False)
 import itertools
 import json
 import os
+import subprocess
 import threading
 from pathlib import Path
 
@@ -168,6 +177,11 @@ def photoframe_loop():
 @socketio.on("connect")
 def on_connect():
     emit("sensor_data", sensors.read_all())
+    # Отправляем новому клиенту последнее известное состояние ТВ сразу же,
+    # а не ждём следующего изменения URL — иначе клиент, подключившийся
+    # после того, как URL ТВ стабилизировался, никогда не узнает текущее
+    # состояние и по умолчанию покажет live CDP-скриншот вместо idle-видео.
+    emit("tv_active_state", _last_tv_active_state)
 
 
 @socketio.on("tv-join")
@@ -229,6 +243,20 @@ CDP_HOST = "127.0.0.1"
 CDP_PORT = 9222
 DASHBOARD_URL = "http://localhost:5000/?kiosk=1"
 
+# --- Закрытие служебного окна настройки дисплея ---------------------------
+# При включении/выключении ТВ по HDMI Xfce всплывает окном "Дисплей"
+# (xfce4-display-settings), которое перекрывает киоск. Мы его не используем,
+# поэтому просто закрываем его при обнаружении, а не боремся за верхний слой.
+# Признак WM_CLASS снят вживую: DISPLAY=:0 wmctrl -l -x
+DISPLAY_SETTINGS_WM_CLASS_HINT = "xfce4-display-settings"
+KIOSK_ONTOP_POLL_SEC = float(os.environ.get("KIOSK_ONTOP_POLL_SEC", "3"))
+KIOSK_DISPLAY = os.environ.get("DISPLAY", ":0")
+
+# Последнее известное состояние активной вкладки ТВ (URL + признак "это
+# дашборд"). Обновляется в tv_active_url_loop на каждой итерации и
+# рассылается новым клиентам сразу при подключении (см. on_connect).
+_last_tv_active_state = {"url": "", "is_dashboard": True}
+
 MEDIA_KEY_CODES = {
     "play_pause": ("MediaPlayPause", 179),
     "next":       ("MediaTrackNext", 176),
@@ -280,6 +308,50 @@ def _cdp_media_key(action: str) -> bool:
     key_up = {"type": "keyUp", "code": code, "windowsVirtualKeyCode": vk, "key": code}
     return _cdp_send(ws_url, "Input.dispatchKeyEvent", key_down) and \
         _cdp_send(ws_url, "Input.dispatchKeyEvent", key_up)
+
+
+def _list_windows() -> list[tuple[str, str]]:
+    """Возвращает список (win_id, wm_class) всех окон одним вызовом wmctrl."""
+    env = {**os.environ, "DISPLAY": KIOSK_DISPLAY}
+    try:
+        out = subprocess.run(
+            ["wmctrl", "-l", "-x"],
+            capture_output=True, text=True, timeout=2, env=env,
+        ).stdout
+    except Exception:
+        return []
+
+    windows = []
+    for line in out.splitlines():
+        parts = line.split(None, 4)
+        if len(parts) < 3:
+            continue
+        windows.append((parts[0], parts[2].lower()))
+    return windows
+
+
+def _close_display_settings_popups() -> int:
+    """
+    Закрывает все окна "Дисплей" (xfce4-display-settings), которые Xfce
+    всплывает при HDMI hotplug. Иногда создаётся сразу два таких окна за
+    одно событие — закрываем все найденные. Возвращает число закрытых окон.
+    """
+    windows = _list_windows()
+    popups = [win_id for win_id, wm_class in windows
+              if DISPLAY_SETTINGS_WM_CLASS_HINT in wm_class]
+
+    env = {**os.environ, "DISPLAY": KIOSK_DISPLAY}
+    closed = 0
+    for win_id in popups:
+        try:
+            subprocess.run(
+                ["wmctrl", "-i", "-c", win_id],
+                capture_output=True, timeout=2, env=env,
+            )
+            closed += 1
+        except Exception:
+            pass
+    return closed
 
 
 @app.route("/tv/go-home", methods=["POST"])
@@ -446,6 +518,14 @@ def tv_input_key():
 
 
 def tv_active_url_loop():
+    """
+    Опрашивает CDP каждые 2 секунды, определяет, показывает ли ТВ сейчас
+    дашборд (localhost:5000) или что-то другое (RuTube/YouTube/Музыка).
+    Всегда обновляет _last_tv_active_state (кеш для новых клиентов),
+    но рассылает событие tv_active_state по Socket.IO только при реальном
+    изменении URL, чтобы не спамить клиентов лишними сообщениями.
+    """
+    global _last_tv_active_state
     last_url = None
     while True:
         try:
@@ -454,11 +534,26 @@ def tv_active_url_loop():
             url = pages[0].get("url", "") if pages else ""
         except Exception:
             url = ""
+        is_dashboard = url.startswith("http://localhost:5000")
+        _last_tv_active_state = {"url": url, "is_dashboard": is_dashboard}
         if url != last_url:
             last_url = url
-            is_dashboard = url.startswith("http://localhost:5000")
-            socketio.emit("tv_active_state", {"url": url, "is_dashboard": is_dashboard})
+            socketio.emit("tv_active_state", _last_tv_active_state)
         socketio.sleep(2)
+
+
+def kiosk_ontop_watch_loop():
+    """
+    Лёгкий сторож: раз в KIOSK_ONTOP_POLL_SEC секунд проверяет, не
+    всплыло ли окно "Дисплей" (xfce4-display-settings) при HDMI hotplug,
+    и если да — сразу закрывает его. В остальное время не делает ничего.
+    """
+    while True:
+        try:
+            _close_display_settings_popups()
+        except Exception:
+            pass
+        socketio.sleep(KIOSK_ONTOP_POLL_SEC)
 
 
 if __name__ == "__main__":
@@ -466,4 +561,5 @@ if __name__ == "__main__":
     socketio.start_background_task(sensor_loop)
     socketio.start_background_task(photoframe_loop)
     socketio.start_background_task(tv_active_url_loop)
+    socketio.start_background_task(kiosk_ontop_watch_loop)
     socketio.run(app, host="127.0.0.1", port=5000)

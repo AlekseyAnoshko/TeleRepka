@@ -2,8 +2,8 @@
 Опрос DHT11 через GPIO sysfs и опционального MH-Z19 через UART.
 
 DHT11:
-- физический пин 11 Repka Pi 4;
-- системный GPIO 111 (PD15);
+- физический пин 33 Repka Pi 4;
+- системный GPIO 362 (PL10);
 - используется пользовательский sysfs GPIO-интерфейс.
 
 Важно:
@@ -30,7 +30,7 @@ except ImportError:
     HAVE_MHZ19 = False
 
 
-DHT11_GPIO = 111
+DHT11_GPIO = 362
 GPIO_BASE = "/sys/class/gpio"
 GPIO_PIN_DIR = f"{GPIO_BASE}/gpio{DHT11_GPIO}"
 GPIO_DIRECTION_PATH = f"{GPIO_PIN_DIR}/direction"
@@ -43,7 +43,7 @@ _RETRY_DELAY_S = 1.0
 # Значение следует подобрать для конкретной платы/ядра при необходимости.
 _LOOP_TIMEOUT_ITERATIONS = 20_000
 
-# DHT11: HIGH для 0 около 26–28 мкс, для 1 около 70 мкс.
+# DHT11: HIGH для 0 около 26-28 мкс, для 1 около 70 мкс.
 # Минимальный разрыв между кластерами, чтобы считать измерение достоверным.
 _MIN_CLUSTER_GAP_ITERATIONS = 2
 
@@ -97,7 +97,7 @@ def _gpio_write(value: int) -> bool:
 
 
 def _busy_wait_us(microseconds: float) -> None:
-    """Busy-wait для критичного окна 20–40 мкс после стартового LOW."""
+    """Busy-wait для критичного окна 20-40 мкс после стартового LOW."""
     deadline = time.perf_counter() + microseconds / 1_000_000.0
     while time.perf_counter() < deadline:
         pass
@@ -147,7 +147,7 @@ def _read_dht11_raw_blocking() -> tuple[int, int, int, int, int] | None:
         return None
     time.sleep(0.020)
 
-    # Отпускаем линию. DHT11 ожидает HIGH примерно 20–40 мкс.
+    # Отпускаем линию. DHT11 ожидает HIGH примерно 20-40 мкс.
     if not _gpio_write(1):
         return None
     _busy_wait_us(30)
@@ -296,7 +296,7 @@ def read_dht11() -> tuple[float | None, float | None]:
 
 
 def _read_co2() -> int | None:
-    """Читает CO₂ с MH-Z19, если библиотека установлена и датчик доступен."""
+    """Читает CO2 с MH-Z19, если библиотека установлена и датчик доступен."""
     if not HAVE_MHZ19:
         return None
 
