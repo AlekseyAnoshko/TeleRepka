@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=TeleRepka Kiosk
+Comment=TeleRepka dashboard in Chromium
+Exec=/usr/local/lib/telerepka/kiosk-session
+Type=Application
+DesktopNames=TeleRepka

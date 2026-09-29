@@ -1,0 +1,55 @@
+#!/bin/bash
+# TeleRepka: сеанс GDM, запускающий Chromium (Snap) в режиме киоска.
+# Устанавливается в /usr/local/lib/telerepka/kiosk-session (см. setup-kiosk-session.sh)
+LOG="$HOME/telerepka-session.log"
+exec >>"$LOG" 2>&1
+echo "=== $(date) session start, DISPLAY=$DISPLAY ==="
+
+command -v xset >/dev/null && { xset s off; xset s noblank; xset -dpms; }
+
+# ждём готовности дашборда (lab-hub-kiosk.service)
+for i in $(seq 1 60); do
+    curl -fs -o /dev/null http://127.0.0.1:5000/ && break
+    sleep 1
+done
+
+PROFILE="$HOME/snap/chromium/common/telerepka-profile"
+mkdir -p "$PROFILE"
+
+# включает предпочтительный режим ТВ и печатает текущее разрешение (ШxВ)
+get_resolution() {
+    command -v xrandr >/dev/null || return 0
+    local out
+    out=$(xrandr --query | awk '/ connected/{print $1; exit}')
+    [ -n "$out" ] && xrandr --output "$out" --auto
+    xrandr --query | awk '/ connected/{c=1;next} /^[^ ]/{c=0} c && /\*/{print $1; exit}'
+}
+
+while true; do
+    RES=$(get_resolution)
+    W=${RES%%x*}; H=${RES#*x}; H=${H%%[!0-9]*}
+    SIZE_ARGS=()
+    if [[ "$W" =~ ^[0-9]+$ && "$H" =~ ^[0-9]+$ ]]; then
+        SIZE_ARGS=(--window-position=0,0 --window-size="$W,$H")
+    fi
+    echo "--- start chromium $(date), resolution=${RES:-unknown} ---"
+
+    /snap/bin/chromium \
+        --kiosk \
+        --start-fullscreen \
+        --force-device-scale-factor=1 \
+        "${SIZE_ARGS[@]}" \
+        --disable-gpu \
+        --no-first-run \
+        --noerrdialogs \
+        --disable-infobars \
+        --disable-session-crashed-bubble \
+        --password-store=basic \
+        --user-data-dir="$PROFILE" \
+        --remote-debugging-address=127.0.0.1 \
+        --remote-debugging-port=9222 \
+        --remote-allow-origins=http://127.0.0.1:9222 \
+        'http://localhost:5000/?kiosk=1'
+    echo "chromium exited with code $?"
+    sleep 3
+done
