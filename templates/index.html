@@ -339,7 +339,6 @@ socket.on('broadcaster-offer', async function ({ sid, name, sdp }) {
   peers[sid] = pc;
   const videoEl = addTile(sid, name);
 
-  pc.ontrack = function (event) { videoEl.srcObject = event.streams[0]; };
   pc.onicecandidate = function (event) {
     if (event.candidate) socket.emit('ice-candidate', { target_sid: sid, candidate: event.candidate });
   };
@@ -348,6 +347,14 @@ socket.on('broadcaster-offer', async function ({ sid, name, sdp }) {
       removeTile(sid);
       delete peers[sid];
     }
+  };
+
+  pc.ontrack = function (event) {
+    videoEl.srcObject = event.streams[0];
+    videoEl.muted = true;
+    videoEl.play().catch(function (err) {
+      console.error('Не удалось воспроизвести трансляцию на ТВ:', err);
+    });
   };
 
   await pc.setRemoteDescription(new RTCSessionDescription(sdp));
