@@ -218,24 +218,69 @@ function updateIdleVideoVisibility() {
   if (showIdle) tvIdleVideo.play().catch(function () {});
 }
 
+let screencastRequested = false;
+
+function applyTvActiveState(data) {
+  isDashboardOnTv = !!(data && data.is_dashboard);
+
+  if (isTvKiosk) {
+    updateIdleVideoVisibility();
+    return;
+  }
+
+  if (isDashboardOnTv) {
+    if (screencastRequested) {
+      socket.emit('tv-screencast-stop');
+      screencastRequested = false;
+    }
+
+    tvScreen.removeAttribute('src');
+    delete tvScreen.dataset.hasFrame;
+    updateIdleVideoVisibility();
+    return;
+  }
+
+  updateIdleVideoVisibility();
+
+  if (!screencastRequested) {
+    screencastRequested = true;
+    socket.emit('tv-screencast-start');
+  }
+}
+
 if (isTvKiosk) {
   tvPlaceholder.style.display = 'none';
   isDashboardOnTv = true;
   updateIdleVideoVisibility();
+}
 
-  socket.on('tv_active_state', function (data) {
-    isDashboardOnTv = !!(data && data.is_dashboard);
-    updateIdleVideoVisibility();
+socket.on('tv_active_state', applyTvActiveState);
+
+if (!isTvKiosk) {
+  socket.on('connect', function () {
+    screencastRequested = false;
+    socket.emit('tv-active-state-check');
   });
 
-  fetch('/tv/screencast/start', { method: 'POST' })
-    .then(function (r) { return r.json(); })
-    .then(function (data) { if (!data.ok) tvPlaceholder.textContent = 'Не удалось подключиться к экрану ТВ.'; })
-    .catch(function () { tvPlaceholder.textContent = 'Ошибка подключения к экрану ТВ.'; });
+  socket.on('disconnect', function () {
+    screencastRequested = false;
+  });
+
+  socket.on('tv-screencast-status', function (data) {
+    if (!data || !data.ok) {
+      screencastRequested = false;
+      tvPlaceholder.textContent = 'Не удалось подключиться к экрану ТВ.';
+      tvPlaceholder.style.display = 'flex';
+    }
+  });
+
+  if (socket.connected) {
+    socket.emit('tv-active-state-check');
+  }
 }
 
 socket.on('tv_screencast_frame', function (data) {
-  if (!data || !data.jpeg) return;
+  if (isTvKiosk || !data || !data.jpeg) return;
   tvScreen.src = 'data:image/jpeg;base64,' + data.jpeg;
   tvScreen.dataset.hasFrame = '1';
   tvPlaceholder.style.display = 'none';
@@ -262,7 +307,13 @@ function sendMouse(type, evt) {
 
 tvScreen.addEventListener('mousedown', function (e) { sendMouse('mousePressed', e); tvScreen.focus(); });
 tvScreen.addEventListener('mouseup', function (e) { sendMouse('mouseReleased', e); });
-tvScreen.addEventListener('mousemove', function (e) { sendMouse('mouseMoved', e); });
+let lastMouseMoveSent = 0;
+tvScreen.addEventListener('mousemove', function (e) {
+  const now = performance.now();
+  if (now - lastMouseMoveSent < 50) return;
+  lastMouseMoveSent = now;
+  sendMouse('mouseMoved', e);
+});
 tvScreen.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
 tvScreen.addEventListener('keydown', function (e) {
@@ -281,9 +332,6 @@ tvScreen.addEventListener('keyup', function (e) {
   }).catch(function () {});
 });
 
-window.addEventListener('beforeunload', function () {
-  fetch('/tv/screencast/stop', { method: 'POST' });
-});
 
 const ICE_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 const videoGrid = document.getElementById('video-grid');

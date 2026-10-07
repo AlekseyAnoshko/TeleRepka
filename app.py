@@ -54,7 +54,7 @@ from pathlib import Path
 
 import requests as _requests
 from flask import Flask, Response, abort, render_template, request, send_file
-from flask_socketio import SocketIO, emit, join_room
+from flask_socketio import SocketIO, emit, join_room, leave_room
 
 import sensors
 import photoframes
@@ -84,6 +84,7 @@ app.config["SECRET_KEY"] = os.environ.get("LAB_HUB_SECRET", "change-me")
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 
 tv_clients: set[str] = set()
+tv_screencast_viewers: set[str] = set()
 
 ALLOWED_MEDIA_PREFIXES = (
     "https://rutube.ru",
@@ -201,6 +202,10 @@ def on_disconnect():
     if request.sid in tv_clients:
         tv_clients.discard(request.sid)
         socketio.emit("tv-status", {"ready": bool(tv_clients)})
+
+    if request.sid in tv_screencast_viewers:
+        tv_screencast_viewers.discard(request.sid)
+        _screencast.remove_viewer()
 
 
 @socketio.on("broadcaster-offer")
@@ -405,8 +410,8 @@ class ScreencastSession:
                     "id": self._next_id(),
                     "method": "Page.startScreencast",
                     "params": {
-                        "format": "jpeg", "quality": 60,
-                        "maxWidth": 1280, "maxHeight": 720, "everyNthFrame": 1,
+                        "format": "jpeg", "quality": 45,
+                        "maxWidth": 960, "maxHeight": 540, "everyNthFrame": 2,
                     },
                 }))
             except Exception:
@@ -449,7 +454,7 @@ class ScreencastSession:
                 data = params.get("data")
                 session_id = params.get("sessionId")
                 if data:
-                    socketio.emit("tv_screencast_frame", {"jpeg": data})
+                    socketio.emit("tv_screencast_frame", {"jpeg": data}, room="tv-screencast-viewers")
                 if session_id is not None:
                     try:
                         ws.send(json.dumps({
@@ -476,6 +481,43 @@ class ScreencastSession:
 
 
 _screencast = ScreencastSession()
+
+
+@socketio.on("tv-screencast-start")
+def tv_screencast_start():
+    sid = request.sid
+
+    if sid in tv_screencast_viewers:
+        emit("tv-screencast-status", {"ok": True})
+        return
+
+    tv_screencast_viewers.add(sid)
+    join_room("tv-screencast-viewers")
+    ok = _screencast.add_viewer()
+
+    if not ok:
+        tv_screencast_viewers.discard(sid)
+        leave_room("tv-screencast-viewers")
+        _screencast.remove_viewer()
+
+    emit("tv-screencast-status", {"ok": ok})
+
+
+@socketio.on("tv-active-state-check")
+def tv_active_state_check():
+    emit("tv_active_state", _last_tv_active_state)
+
+
+@socketio.on("tv-screencast-stop")
+def tv_screencast_stop():
+    sid = request.sid
+
+    if sid in tv_screencast_viewers:
+        tv_screencast_viewers.discard(sid)
+        leave_room("tv-screencast-viewers")
+        _screencast.remove_viewer()
+
+    emit("tv-screencast-status", {"ok": True})
 
 
 @app.route("/tv/screencast/start", methods=["POST"])
