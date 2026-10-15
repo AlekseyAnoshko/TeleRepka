@@ -82,6 +82,27 @@
       </a>
     `;
 
+    card.querySelector('.meeting-link').addEventListener('click', async (event) => {
+      const isKiosk =
+        new URLSearchParams(window.location.search).get('kiosk') === '1';
+
+      if (isKiosk) event.preventDefault();
+
+      try {
+        const response = await fetch('/tv/open-meetings', {
+          method: 'POST'
+        });
+        const result = await response.json();
+
+        if (!response.ok || !result.ok) {
+          throw new Error('Не удалось открыть протоколы на телевизоре');
+        }
+      } catch (error) {
+        console.error('TeleRepka:', error);
+        alert('Не удалось открыть протоколы на ТВ. Проверьте киоск.');
+      }
+    });
+
     oldCard.insertAdjacentElement('afterend', card);
     oldCard.hidden = true;
     oldCard.style.display = 'none';

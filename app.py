@@ -359,6 +359,12 @@ def _close_display_settings_popups() -> int:
     return closed
 
 
+@app.route("/tv/open-meetings", methods=["POST"])
+def tv_open_meetings():
+    ok = _cdp_navigate("https://cloud-b.istu.edu/aux/")
+    return {"ok": ok}, (200 if ok else 502)
+
+
 @app.route("/tv/go-home", methods=["POST"])
 def tv_go_home_http():
     ok = _cdp_navigate(DASHBOARD_URL)
