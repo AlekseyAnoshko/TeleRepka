@@ -5,6 +5,26 @@
 <title>Repka Pi Lab Hub</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
+/* TeleRepka TV zoom 150% */
+html.tv-kiosk #app {
+  zoom: 1.5;
+  width: calc(100vw / 1.5);
+  height: calc(100vh / 1.5);
+  grid-template-rows: 72px minmax(0, 1fr);
+}
+html.tv-kiosk #app > aside,
+html.tv-kiosk #app > main.stage {
+  min-height: 0;
+  min-width: 0;
+}
+</style>
+<script>
+if (new URLSearchParams(location.search).get('kiosk') === '1') {
+  document.documentElement.classList.add('tv-kiosk');
+}
+</script>
+
+<style>
 :root {
   --bg: #0d1117; --panel: #161b22; --border: #30363d; --accent: #58a6ff;
   --good: #3fb950; --bad: #f85149; --text: #c9d1d9; --muted: #8b949e;
