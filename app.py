@@ -50,6 +50,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 import requests as _requests
@@ -416,8 +417,8 @@ class ScreencastSession:
                     "id": self._next_id(),
                     "method": "Page.startScreencast",
                     "params": {
-                        "format": "jpeg", "quality": 45,
-                        "maxWidth": 960, "maxHeight": 540, "everyNthFrame": 2,
+                        "format": "jpeg", "quality": 35,
+                        "maxWidth": 800, "maxHeight": 450, "everyNthFrame": 2,
                     },
                 }))
             except Exception:
@@ -439,6 +440,8 @@ class ScreencastSession:
             self._running = False
 
     def _read_loop(self):
+        last_frame_sent = 0.0
+        min_frame_interval = 0.5  # At most 2 preview frames per second.
         while True:
             with self._lock:
                 ws = self._ws
@@ -459,8 +462,10 @@ class ScreencastSession:
                 params = msg.get("params", {})
                 data = params.get("data")
                 session_id = params.get("sessionId")
-                if data:
+                now = time.monotonic()
+                if data and now - last_frame_sent >= min_frame_interval:
                     socketio.emit("tv_screencast_frame", {"jpeg": data}, room="tv-screencast-viewers")
+                    last_frame_sent = now
                 if session_id is not None:
                     try:
                         ws.send(json.dumps({
