@@ -240,6 +240,29 @@ function updateIdleVideoVisibility() {
 
 let screencastRequested = false;
 
+function shouldPreviewTv() {
+  return !isTvKiosk && socket.connected && !document.hidden &&
+    document.getElementById('view-control').classList.contains('active') &&
+    !isDashboardOnTv;
+}
+
+function syncScreencast() {
+  const needed = shouldPreviewTv();
+  if (needed === screencastRequested) return;
+  screencastRequested = needed;
+  socket.emit(needed ? 'tv-screencast-start' : 'tv-screencast-stop');
+}
+
+document.addEventListener('visibilitychange', syncScreencast);
+window.addEventListener('pagehide', function () {
+  if (screencastRequested && socket.connected) socket.emit('tv-screencast-stop');
+  screencastRequested = false;
+});
+
+document.querySelectorAll('.stage-tab').forEach(function (tab) {
+  tab.addEventListener('click', syncScreencast);
+});
+
 function applyTvActiveState(data) {
   isDashboardOnTv = !!(data && data.is_dashboard);
 
@@ -249,10 +272,7 @@ function applyTvActiveState(data) {
   }
 
   if (isDashboardOnTv) {
-    if (screencastRequested) {
-      socket.emit('tv-screencast-stop');
-      screencastRequested = false;
-    }
+    syncScreencast();
 
     tvScreen.removeAttribute('src');
     delete tvScreen.dataset.hasFrame;
@@ -262,10 +282,7 @@ function applyTvActiveState(data) {
 
   updateIdleVideoVisibility();
 
-  if (!screencastRequested) {
-    screencastRequested = true;
-    socket.emit('tv-screencast-start');
-  }
+  syncScreencast();
 }
 
 if (isTvKiosk) {
@@ -300,7 +317,7 @@ if (!isTvKiosk) {
 }
 
 socket.on('tv_screencast_frame', function (data) {
-  if (isTvKiosk || !data || !data.jpeg) return;
+  if (!shouldPreviewTv() || !data || !data.jpeg) return;
   tvScreen.src = 'data:image/jpeg;base64,' + data.jpeg;
   tvScreen.dataset.hasFrame = '1';
   tvPlaceholder.style.display = 'none';
