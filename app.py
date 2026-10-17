@@ -50,6 +50,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 import requests as _requests
@@ -416,8 +417,8 @@ class ScreencastSession:
                     "id": self._next_id(),
                     "method": "Page.startScreencast",
                     "params": {
-                        "format": "jpeg", "quality": 45,
-                        "maxWidth": 960, "maxHeight": 540, "everyNthFrame": 2,
+                        "format": "jpeg", "quality": 65,
+                        "maxWidth": 1600, "maxHeight": 900, "everyNthFrame": 2,
                     },
                 }))
             except Exception:
@@ -439,6 +440,8 @@ class ScreencastSession:
             self._running = False
 
     def _read_loop(self):
+        last_frame_sent = 0.0
+        min_frame_interval = 0.5  # At most 2 preview frames per second.
         while True:
             with self._lock:
                 ws = self._ws
@@ -459,8 +462,10 @@ class ScreencastSession:
                 params = msg.get("params", {})
                 data = params.get("data")
                 session_id = params.get("sessionId")
-                if data:
+                now = time.monotonic()
+                if data and now - last_frame_sent >= min_frame_interval:
                     socketio.emit("tv_screencast_frame", {"jpeg": data}, room="tv-screencast-viewers")
+                    last_frame_sent = now
                 if session_id is not None:
                     try:
                         ws.send(json.dumps({
@@ -540,16 +545,58 @@ def screencast_stop():
 
 @app.route("/tv/input/mouse", methods=["POST"])
 def tv_input_mouse():
+    import os
+    import subprocess
+
     data = request.get_json(silent=True) or {}
-    params = {
-        "type": data.get("type", "mousePressed"),
-        "x": data.get("x", 0),
-        "y": data.get("y", 0),
-        "button": data.get("button", "left"),
-        "clickCount": 1,
-    }
-    ok = _screencast.send_input("Input.dispatchMouseEvent", params)
-    return {"ok": ok}, (200 if ok else 502)
+    event_type = data.get("type")
+
+    if event_type not in ("mouseMoved", "mousePressed", "mouseReleased"):
+        return {"ok": False, "error": "Invalid mouse event"}, 400
+
+    try:
+        x = int(data["x"])
+        y = int(data["y"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return {"ok": False, "error": "Invalid coordinates"}, 400
+
+    if not (0 <= x < 3840 and 0 <= y < 2160):
+        return {"ok": False, "error": "Out of bounds"}, 400
+
+    env = os.environ.copy()
+    env["DISPLAY"] = ":0"
+    env["XAUTHORITY"] = "/run/user/1000/gdm/Xauthority"
+
+    try:
+        subprocess.run(
+            ["/usr/bin/xdotool", "mousemove", str(x), str(y)],
+            env=env,
+            check=True,
+            timeout=2,
+            capture_output=True,
+        )
+
+        if event_type == "mousePressed":
+            action = "mousedown"
+        elif event_type == "mouseReleased":
+            action = "mouseup"
+        else:
+            action = None
+
+        if action:
+            subprocess.run(
+                ["/usr/bin/xdotool", action, "1"],
+                env=env,
+                check=True,
+                timeout=2,
+                capture_output=True,
+            )
+
+    except (OSError, subprocess.SubprocessError) as exc:
+        app.logger.error("X11 mouse input failed: %s", exc)
+        return {"ok": False, "error": "X11 mouse input failed"}, 502
+
+    return {"ok": True}
 
 
 @app.route("/tv/input/key", methods=["POST"])

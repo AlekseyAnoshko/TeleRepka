@@ -93,6 +93,11 @@ main.stage { display: flex; flex-direction: column; gap: 8px; padding: 12px; ove
 #placeholder .hint { color: var(--muted); font-size: 14px; }
 
 /* --- Полноэкранный режим трансляции на ТВ (kiosk) --- */
+html.tv-kiosk:has(body.broadcast-active) #app {
+  zoom: 1;
+  width: 100vw;
+  height: 100vh;
+}
 body.broadcast-active #app { display: block; padding: 0; }
 body.broadcast-active header,
 body.broadcast-active aside,
@@ -108,6 +113,26 @@ body.broadcast-active .stage-view#view-broadcast {
 body.broadcast-active #video-grid { width: 100vw; height: 100vh; gap: 0; }
 body.broadcast-active .video-tile { border: 0; border-radius: 0; }
 body.broadcast-active .video-tile .name-tag { bottom: 18px; left: 18px; font-size: 18px; }
+
+/* TV: full physical viewport during WebRTC broadcast */
+html.tv-kiosk:has(body.broadcast-active) #app {
+  zoom: 1 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+}
+
+body.broadcast-active main.stage,
+body.broadcast-active #view-broadcast {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+}
+
+body.broadcast-active #video-grid {
+  width: 100% !important;
+  height: 100% !important;
+}
 </style>
 </head>
 <body>
@@ -240,6 +265,29 @@ function updateIdleVideoVisibility() {
 
 let screencastRequested = false;
 
+function shouldPreviewTv() {
+  return !isTvKiosk && socket.connected && !document.hidden &&
+    document.getElementById('view-control').classList.contains('active') &&
+    !isDashboardOnTv;
+}
+
+function syncScreencast() {
+  const needed = shouldPreviewTv();
+  if (needed === screencastRequested) return;
+  screencastRequested = needed;
+  socket.emit(needed ? 'tv-screencast-start' : 'tv-screencast-stop');
+}
+
+document.addEventListener('visibilitychange', syncScreencast);
+window.addEventListener('pagehide', function () {
+  if (screencastRequested && socket.connected) socket.emit('tv-screencast-stop');
+  screencastRequested = false;
+});
+
+document.querySelectorAll('.stage-tab').forEach(function (tab) {
+  tab.addEventListener('click', syncScreencast);
+});
+
 function applyTvActiveState(data) {
   isDashboardOnTv = !!(data && data.is_dashboard);
 
@@ -249,10 +297,7 @@ function applyTvActiveState(data) {
   }
 
   if (isDashboardOnTv) {
-    if (screencastRequested) {
-      socket.emit('tv-screencast-stop');
-      screencastRequested = false;
-    }
+    syncScreencast();
 
     tvScreen.removeAttribute('src');
     delete tvScreen.dataset.hasFrame;
@@ -262,10 +307,7 @@ function applyTvActiveState(data) {
 
   updateIdleVideoVisibility();
 
-  if (!screencastRequested) {
-    screencastRequested = true;
-    socket.emit('tv-screencast-start');
-  }
+  syncScreencast();
 }
 
 if (isTvKiosk) {
@@ -300,7 +342,7 @@ if (!isTvKiosk) {
 }
 
 socket.on('tv_screencast_frame', function (data) {
-  if (isTvKiosk || !data || !data.jpeg) return;
+  if (!shouldPreviewTv() || !data || !data.jpeg) return;
   tvScreen.src = 'data:image/jpeg;base64,' + data.jpeg;
   tvScreen.dataset.hasFrame = '1';
   tvPlaceholder.style.display = 'none';
@@ -308,21 +350,60 @@ socket.on('tv_screencast_frame', function (data) {
 });
 
 function mapToTvCoords(evt) {
-  const rect = tvScreen.getBoundingClientRect();
-  const scaleX = tvScreen.naturalWidth / rect.width;
-  const scaleY = tvScreen.naturalHeight / rect.height;
-  return {
-    x: Math.round((evt.clientX - rect.left) * scaleX),
-    y: Math.round((evt.clientY - rect.top) * scaleY),
-  };
+    const rect = tvScreen.getBoundingClientRect();
+
+    const naturalWidth = tvScreen.naturalWidth;
+    const naturalHeight = tvScreen.naturalHeight;
+
+    if (!naturalWidth || !naturalHeight ||
+        !rect.width || !rect.height) {
+        return null;
+    }
+
+    const scale = Math.min(
+        rect.width / naturalWidth,
+        rect.height / naturalHeight
+    );
+
+    const width = naturalWidth * scale;
+    const height = naturalHeight * scale;
+
+    // Границы фактически отображаемого изображения
+    const left = rect.left + (rect.width - width) / 2;
+    const right = left + width;
+    const top = rect.top + (rect.height - height) / 2;
+    const bottom = top + height;
+
+    // Не отправляем события из пустых полей
+    if (evt.clientX < left || evt.clientX > right ||
+        evt.clientY < top || evt.clientY > bottom) {
+        return null;
+    }
+
+    const u = (evt.clientX - left) / width;
+    const v = (evt.clientY - top) / height;
+
+    // CSS viewport Chromium на телевизоре
+    return {
+        x: Math.round(u * 3839),
+        y: Math.round(v * 2159)
+    };
 }
 
 function sendMouse(type, evt) {
-  const c = mapToTvCoords(evt);
-  fetch('/tv/input/mouse', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: type, x: c.x, y: c.y, button: 'left' }),
-  }).catch(function () {});
+    const coords = mapToTvCoords(evt);
+    if (!coords) return;
+
+    fetch('/tv/input/mouse', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            type: type,
+            x: coords.x,
+            y: coords.y,
+            button: type === 'mouseMoved' ? 'none' : 'left'
+        })
+    }).catch(console.error);
 }
 
 tvScreen.addEventListener('mousedown', function (e) { sendMouse('mousePressed', e); tvScreen.focus(); });
