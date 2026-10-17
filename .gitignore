@@ -15,3 +15,7 @@ certs/
 # Local diagnostic binaries
 tools/*probe
 tools/dht11_wiringrp
+
+# Local employee database
+data/*.db
+data/*.db-*

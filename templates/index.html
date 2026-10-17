@@ -133,6 +133,26 @@ body.broadcast-active #video-grid {
   width: 100% !important;
   height: 100% !important;
 }
+
+/* Laboratory employees schedule view */
+.schedule-link { width:100%; font-family:inherit; background:#238636; color:#fff; }
+#view-schedules { overflow-y:auto; }
+.schedule-container { max-width:1100px; margin:auto; padding:12px; }
+.schedule-container h2 { color:var(--accent); font-size:20px; margin:0 0 16px; }
+#employee-search { width:100%; padding:12px; margin-bottom:12px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text); font-size:15px; }
+.schedule-muted { color:var(--muted); font-size:14px; }
+.employee-item { width:100%; display:block; text-align:left; padding:13px 15px; margin:0 0 7px; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:9px; cursor:pointer; }
+.employee-item:hover,.employee-item:focus-visible { border-color:var(--accent); }
+.employee-item small { display:block; margin-top:5px; color:var(--muted); }
+#schedule-details[hidden],#schedule-directory[hidden] { display:none; }
+#schedule-back { padding:9px 14px; margin-bottom:18px; background:var(--panel); color:var(--accent); border:1px solid var(--border); border-radius:8px; cursor:pointer; }
+.schedule-day { margin:18px 0; padding:14px; background:var(--panel); border:1px solid var(--border); border-radius:10px; }
+.schedule-day h3 { margin:0 0 12px; color:var(--accent); }
+.schedule-lesson { padding:10px 0; border-top:1px solid var(--border); }
+.schedule-lesson-time { color:var(--good); font-weight:700; }
+.schedule-lesson-subject { margin:5px 0; font-weight:600; }
+.schedule-lesson-meta { color:var(--muted); font-size:13px; line-height:1.5; }
+
 </style>
 </head>
 <body>
@@ -160,6 +180,7 @@ body.broadcast-active #video-grid {
 <div class="panel">
 <h2>Трансляция</h2>
 <a id="broadcast-link" class="media-link broadcast" href="/broadcast" target="_blank" rel="noopener noreferrer">Открыть страницу трансляции</a>
+<button type="button" id="btn-employee-schedules" class="media-link schedule-link">Расписание сотрудников</button>
 </div>
 <div class="panel media-panel">
 <h2>Медиа на ТВ</h2>
@@ -173,6 +194,7 @@ body.broadcast-active #video-grid {
 <div class="stage-tabs">
 <button class="stage-tab active" data-tab="control">Управление</button>
 <button class="stage-tab" data-tab="broadcast">Трансляция</button>
+<button type="button" class="stage-tab" data-tab="schedules">Расписание сотрудников</button>
 </div>
 <div class="stage-view active" id="view-control">
 <div id="tv-screen-wrap">
@@ -180,6 +202,21 @@ body.broadcast-active #video-grid {
 <img id="tv-screen" tabindex="0">
 <div id="tv-screen-placeholder"><div class="hint" style="font-size:14px">Подключение к экрану ТВ...</div></div>
 </div>
+</div>
+<div class="stage-view" id="view-schedules">
+  <div class="schedule-container">
+    <section id="schedule-directory">
+      <h2>Сотрудники лаборатории</h2>
+      <input id="employee-search" type="search" placeholder="Поиск по ФИО" autocomplete="off">
+      <p id="employee-count" class="schedule-muted" aria-live="polite">Загрузка сотрудников...</p>
+      <div id="employee-list"></div>
+    </section>
+    <section id="schedule-details" hidden>
+
+      <h2 id="schedule-employee-name"></h2>
+      <div id="schedule-content" aria-live="polite"></div>
+    </section>
+  </div>
 </div>
 <div class="stage-view" id="view-broadcast">
 <div id="video-grid"></div>
@@ -255,6 +292,7 @@ const tvPlaceholder = document.getElementById('tv-screen-placeholder');
 const tvIdleVideo = document.getElementById('tv-idle-video');
 let isDashboardOnTv = false;
 const peers = {};
+let tvScheduleMode = false;
 
 function updateIdleVideoVisibility() {
   const showIdle = isDashboardOnTv && Object.keys(peers).length === 0;
@@ -452,7 +490,7 @@ function updateGridLayout() {
 
   if (isTvKiosk) {
     document.body.classList.toggle('broadcast-active', n > 0);
-    setActiveStageView(n > 0 ? 'broadcast' : 'control');
+    setActiveStageView(n > 0 ? 'broadcast' : (tvScheduleMode ? 'schedules' : 'control'));
   }
 
   if (n === 0) {
@@ -526,5 +564,149 @@ socket.on('broadcaster-stop', function ({ sid }) {
 });
 </script>
 <script src="/static/js/kiosk-clock.js?v=3"></script>
+<script>
+// Laboratory employees directory and schedules.
+(function () {
+  'use strict';
+  const directory = document.getElementById('schedule-directory');
+  const details = document.getElementById('schedule-details');
+  const list = document.getElementById('employee-list');
+  const count = document.getElementById('employee-count');
+  const search = document.getElementById('employee-search');
+  const content = document.getElementById('schedule-content');
+  const heading = document.getElementById('schedule-employee-name');
+  let employees = [];
+  let loaded = false;
+  let requestVersion = 0;
+
+  function node(tag, cls, value) {
+    const element = document.createElement(tag);
+    if (cls) element.className = cls;
+    if (value !== undefined && value !== null) element.textContent = String(value);
+    return element;
+  }
+
+  function renderEmployees() {
+    list.replaceChildren();
+    const query = search.value.trim().toLocaleLowerCase('ru-RU');
+    const filtered = employees.filter(e => e.name.toLocaleLowerCase('ru-RU').includes(query));
+    count.textContent = 'Найдено: ' + filtered.length + ' из ' + employees.length;
+    if (!filtered.length) list.append(node('p', 'schedule-muted', 'Сотрудники не найдены.'));
+    filtered.forEach(function (employee) {
+      const button = node('button', 'employee-item');
+      button.type = 'button';
+      button.append(node('span', '', employee.name));
+      button.append(node('small', '', employee.schedule_url ? 'Расписание подключено' : 'Расписание пока не подключено'));
+      button.addEventListener('click', function () {
+        openSchedule(employee);
+        if (!isTvKiosk) socket.emit('tv-schedule-select', {employee_id: employee.id});
+      });
+      list.append(button);
+    });
+  }
+
+  async function loadEmployees() {
+    if (loaded) return;
+    count.textContent = 'Загрузка сотрудников...';
+    try {
+      const response = await fetch('/api/employees', {cache:'no-store'});
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      const data = await response.json();
+      if (!Array.isArray(data)) throw new Error('Неверный формат списка');
+      employees = data;
+      loaded = true;
+      renderEmployees();
+    } catch (error) {
+      count.textContent = 'Не удалось загрузить сотрудников: ' + error.message;
+    }
+  }
+
+  function appendLesson(dayElement, lesson) {
+    const item = node('div', 'schedule-lesson');
+    const week = {even:'Чётная неделя',odd:'Нечётная неделя',all:'Каждая неделя'}[lesson.week] || '';
+    item.append(node('div', 'schedule-lesson-time', [lesson.time, week].filter(Boolean).join(' · ')));
+    item.append(node('div', 'schedule-lesson-subject', lesson.subject || 'Занятие'));
+    const groups = String(lesson.groups || '').replace(/^[,\s]+/, '').trim();
+    const metadata = [lesson.type, groups, lesson.room].filter(Boolean).join(' · ');
+    if (metadata) item.append(node('div', 'schedule-lesson-meta', metadata));
+    dayElement.append(item);
+  }
+
+  async function openSchedule(employee) {
+    const currentRequest = ++requestVersion;
+    directory.hidden = true;
+    details.hidden = false;
+    heading.textContent = employee.name;
+    content.replaceChildren();
+    if (!employee.schedule_url) {
+      content.append(node('p', 'schedule-muted', 'Расписание пока не подключено.'));
+      return;
+    }
+    content.append(node('p', 'schedule-muted', 'Загрузка расписания...'));
+    try {
+      const response = await fetch('/api/employees/' + encodeURIComponent(employee.id) + '/schedule', {cache:'no-store'});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'HTTP ' + response.status);
+      if (currentRequest !== requestVersion) return;
+      content.replaceChildren();
+      if (!Array.isArray(data.days) || !data.days.length) {
+        content.append(node('p', 'schedule-muted', data.message || 'На сайте ИРНИТУ занятий не найдено.'));
+        return;
+      }
+      data.days.forEach(function (day) {
+        const section = node('section', 'schedule-day');
+        section.append(node('h3', '', day.day));
+        (day.lessons || []).forEach(function (lesson) { appendLesson(section, lesson); });
+        content.append(section);
+      });
+    } catch (error) {
+      if (currentRequest !== requestVersion) return;
+      content.replaceChildren(node('p', 'schedule-muted', 'Ошибка загрузки расписания: ' + error.message));
+    }
+  }
+
+  function showDirectory() {
+    ++requestVersion;
+    details.hidden = true;
+    directory.hidden = false;
+    renderEmployees();
+  }
+
+  document.getElementById('btn-employee-schedules').addEventListener('click', function () {
+    search.value = '';
+    showDirectory();
+    setActiveStageView('schedules');
+    loadEmployees();
+    socket.emit('tv-show-schedules');
+  });
+  document.querySelector('.stage-tab[data-tab="schedules"]').addEventListener('click', loadEmployees);
+
+  socket.on('tv-show-schedules', function () {
+    if (!isTvKiosk || Object.keys(peers).length > 0) return;
+    tvScheduleMode = true;
+    search.value = '';
+    showDirectory();
+    updateGridLayout();
+    setActiveStageView('schedules');
+    loadEmployees();
+  });
+
+  socket.on('tv-schedule-select', async function (data) {
+    if (!isTvKiosk || !data || Object.keys(peers).length) return;
+    tvScheduleMode = true;
+    updateGridLayout();
+    await loadEmployees();
+    const employee = employees.find(e => e.id === Number(data.employee_id));
+    if (employee) openSchedule(employee);
+  });
+
+  socket.on('tv-schedule-back', function () {
+    if (!isTvKiosk || Object.keys(peers).length) return;
+    showDirectory();
+  });
+  search.addEventListener('input', renderEmployees);
+})();
+
+</script>
 </body>
 </html>
