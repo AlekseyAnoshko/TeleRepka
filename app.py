@@ -54,7 +54,7 @@ import time
 from pathlib import Path
 
 import requests as _requests
-from flask import Flask, Response, abort, render_template, request, send_file
+from flask import Flask, Response, abort, render_template, request, send_file, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
 import sensors
@@ -98,6 +98,49 @@ ALLOWED_MEDIA_PREFIXES = (
 def index():
     """Главная страница — показывается на телевизоре лаборатории (kiosk-режим)."""
     return render_template("index.html")
+
+
+
+# --- Сотрудники лаборатории: просмотр расписаний ---
+from employees import init_db, list_employees, get_employee
+from schedule_parser import parse_schedule
+
+init_db()
+
+
+@app.route("/api/employees")
+def employees_api():
+    return jsonify(list_employees())
+
+
+@app.route("/api/employees/<int:employee_id>/schedule")
+def employee_schedule_api(employee_id):
+    employee = get_employee(employee_id)
+    if employee is None:
+        return jsonify({"error": "Сотрудник не найден"}), 404
+
+    if not employee.get("schedule_url"):
+        return jsonify({
+            "employee": employee,
+            "days": [],
+            "message": "Расписание пока не подключено",
+        })
+
+    try:
+        response = _requests.get(
+            employee["schedule_url"],
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        response.raise_for_status()
+        days = parse_schedule(response.text)
+    except (_requests.RequestException, ValueError) as exc:
+        app.logger.warning("Ошибка получения расписания: %s", exc)
+        return jsonify({
+            "error": "Не удалось получить расписание ИРНИТУ"
+        }), 502
+
+    return jsonify({"employee": employee, "days": days})
 
 
 @app.route("/broadcast")
@@ -191,6 +234,27 @@ def tv_join():
     tv_clients.add(request.sid)
     join_room("tv")
     socketio.emit("tv-status", {"ready": True})
+
+
+@socketio.on("tv-show-schedules")
+def tv_show_schedules():
+    socketio.emit("tv-show-schedules", room="tv")
+
+
+@socketio.on("tv-schedule-select")
+def tv_schedule_select(data):
+    try:
+        employee_id = int((data or {}).get("employee_id"))
+    except (TypeError, ValueError):
+        return
+    if employee_id <= 0 or get_employee(employee_id) is None:
+        return
+    socketio.emit("tv-schedule-select", {"employee_id": employee_id}, room="tv")
+
+
+@socketio.on("tv-schedule-back")
+def tv_schedule_back():
+    socketio.emit("tv-schedule-back", room="tv")
 
 
 @socketio.on("tv-ready-check")
