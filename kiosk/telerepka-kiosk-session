@@ -35,7 +35,10 @@ while true; do
         --start-fullscreen \
         --force-device-scale-factor=1 \
         "${SIZE_ARGS[@]}" \
-        --disable-gpu \
+        --use-gl=angle \
+        --use-angle=gles-egl \
+        --ignore-gpu-blocklist \
+        --enable-gpu-rasterization \
         --no-first-run \
         --noerrdialogs \
         --disable-infobars \

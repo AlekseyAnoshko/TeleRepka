@@ -1,0 +1,71 @@
+# Развёртывание TeleRepka на другой Repka Pi
+
+Целевая платформа: **Repka Pi 4, Ubuntu 22.04, aarch64, GDM, Snap Chromium**.
+
+Этот каталог содержит установщик и диагностику. Для установки используются существующие файлы репозитория: app.py, requirements.txt, config.json, templates/, static/, kiosk/setup-kiosk-session.sh, kiosk/telerepka-kiosk-session и kiosk/telerepka.desktop.
+
+**Не включайте старые lab-hub.service и lab-hub-kiosk.service из корня репозитория одновременно с новым вариантом.** Новый установщик создаёт один systemd-сервис lab-hub-kiosk.service **только для Flask**. Chromium запускается сеансом GDM.
+
+## Работающая основная плата
+
+Фактический путь проекта: `/home/aaf/git/TeleRepka`; Flask запускается службой `lab-hub-kiosk.service` через `/home/aaf/git/TeleRepka/.venv/bin/python /home/aaf/git/TeleRepka/app.py`. Дополнительная копия `/home/aaf/git/TeleRepka-tv-sync` не является активным рабочим каталогом Flask. Диагностика и правила безопасного обновления приведены в [основном README](../README.md#рабочая-repka-pi-фактическая-конфигурация-16102026).
+
+**Не запускать этот установщик на основной работающей плате.**
+
+## Установка на чистую плату
+
+1. Установите Ubuntu 22.04, настройте сеть, GDM, обычного пользователя, SSH и подключите ТВ.
+2. Под обычным пользователем скачайте проект:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git
+mkdir -p ~/git
+git clone https://github.com/AlekseyAnoshko/TeleRepka.git ~/git/TeleRepka
+cd ~/git/TeleRepka
+```
+
+3. Замените aaf на **существующего пользователя** новой платы и запустите:
+
+```bash
+sudo bash deploy/install.sh --user aaf --with-kiosk --dry-run
+sudo bash deploy/install.sh --user aaf --with-kiosk
+sudo bash deploy/check.sh
+sudo reboot
+```
+
+Флаг **--with-kiosk** включает GDM-автологин и полноэкранный Chromium. Без него устанавливается только сервер, а графический вход не меняется. **--dry-run** только показывает план и не меняет систему.
+
+Установщик ставит Python, venv, Snap Chromium, curl, xrandr/xset; устанавливает зависимости в .venv; создаёт случайный LAB_HUB_SECRET в /etc/telerepka/lab-hub.env с правами 0600; создаёт systemd-сервис с актуальным путём проекта. Flask работает от root для совместимости с GPIO SysFS на проверенной плате. При --with-kiosk используется существующий kiosk/setup-kiosk-session.sh, который делает резервные копии GDM и включает автологин. **Скрипт не перезапускает GDM и не перезагружает плату автоматически.**
+
+## Проверка
+
+После перезагрузки Chromium открывает http://localhost:5000/?kiosk=1. CSS увеличивает дашборд до 150%, а Chromium использует масштаб 100% и занимает текущий экран X11. Разрешение **3840×2160 зависит от ТВ и EDID** и должно проверяться на новой плате.
+
+```bash
+sudo systemctl status lab-hub-kiosk.service --no-pager
+curl -s 'http://127.0.0.1:5000/?kiosk=1' | head
+curl -s 'http://127.0.0.1:9222/json/list'
+sudo bash deploy/check.sh
+```
+
+Проверьте визуально нижние кнопки, видео, разрешение ТВ, показания датчиков и трансляцию. CDP-порт 9222 должен слушать только 127.0.0.1.
+
+## Настраивается отдельно
+
+- **Датчики:** sensors.py использует DHT11 на физическом контакте 33 и MH-Z19B на /dev/ttyS2. Необходимы правильная распиновка, UART/overlay и библиотека RepkaPi.GPIO от производителя (её нет в requirements.txt). Без аппаратной библиотеки показания могут отсутствовать.
+- **Фоторамки:** замените пример адресов и имён в config.json на реальные.
+- **Wi-Fi точка доступа:** network/setup-hotspot.sh запускается отдельно и может оборвать SSH; пароль нельзя сохранять в Git.
+- **Доступ сотрудников и WebRTC:** текущий Flask слушает только 127.0.0.1:5000. HTTPS и сетевой доступ к /broadcast требуют отдельной настройки reverse proxy и сертификатов. Установщик не настраивает nginx, squid или nftables.
+- **GPU:** на основной Repka Pi подтверждены Mali-T720 / Panfrost (OpenGL ES 2.0) и улучшение плавности видео после возврата GPU. Текущий `kiosk/telerepka-kiosk-session` использует `--use-gl=angle --use-angle=gles-egl --ignore-gpu-blocklist --enable-gpu-rasterization` вместо `--disable-gpu`. Аппаратное декодирование видео отдельно не подтверждено.
+- **Безопасность:** сервис работает от root из-за аппаратного GPIO; не публикуйте его в Интернет без отдельной проверки.
+
+## Откат
+
+Скрипт настройки GDM сохраняет /etc/gdm3/custom.conf.before-telerepka и копию AccountsService (если файл существовал). Восстановление описано в kiosk/KIOSK.md. Для остановки сервера:
+
+```bash
+sudo systemctl disable --now lab-hub-kiosk.service
+```
+
+**Статус:** подготовлено на основе рабочей конфигурации первой Repka Pi, **на второй плате ещё не протестировано**. Не запускайте установщик на уже работающей основной плате.

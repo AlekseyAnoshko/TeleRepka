@@ -19,6 +19,43 @@ Ethernet (`end0`), раздаёт Wi-Fi как хотспот для фотор�
 
 Проект реализован на Debian 12 (ARM), но может быть адаптирован и для российских операционных систем для ARM-архитектуры.
 
+## Рабочая Repka Pi: фактическая конфигурация (16.10.2026)
+
+> Этот раздел описывает **основную работающую плату**, а не инструкцию для чистой установки. Проверено по выводу `systemctl show` и диагностике через SSH.
+
+| Компонент | Путь / значение |
+|---|---|
+| Пользователь Linux | `aaf` |
+| Основной каталог проекта | `/home/aaf/git/TeleRepka` |
+| Запускаемый Flask | `/home/aaf/git/TeleRepka/app.py` |
+| Python виртуального окружения | `/home/aaf/git/TeleRepka/.venv/bin/python` |
+| systemd-служба Flask | `lab-hub-kiosk.service` |
+| Рабочий каталог службы | `/home/aaf/git/TeleRepka` |
+| Дополнительная копия (не действующий Flask) | `/home/aaf/git/TeleRepka-tv-sync` |
+| Сценарий сеанса Chromium | `/usr/local/lib/telerepka/kiosk-session` |
+| Локальный Flask | `http://127.0.0.1:5000/` |
+| Дашборд ТВ | `http://localhost:5000/?kiosk=1` |
+| Chromium CDP | `127.0.0.1:9222` |
+| Графический режим ТВ | 3840×2160, X11/GDM, CSS zoom 150% |
+
+Chromium Snap 139 работает с Mali-T720 / Panfrost; в работающем сценарии используются `--use-gl=angle`, `--use-angle=gles-egl`, `--ignore-gpu-blocklist`, `--enable-gpu-rasterization`. После возврата GPU-параметров воспроизведение видео стало плавнее; аппаратное **декодирование** видео отдельно не подтверждено.
+
+**Быстрая диагностика (без изменения состояния):**
+
+```bash
+cd /home/aaf/git/TeleRepka
+git -c core.pager=cat status --short --branch
+git remote -v
+git --no-pager log -1 --oneline
+SYSTEMD_PAGER=cat systemctl show lab-hub-kiosk.service -p MainPID -p WorkingDirectory -p ExecStart --no-pager
+SYSTEMD_PAGER=cat systemctl is-active lab-hub-kiosk.service
+curl -s -o /dev/null -w 'HTTP %{http_code}\n' http://127.0.0.1:5000/
+```
+
+**Безопасность при обновлении:** прежде чем менять `app.py` или `templates/index.html`, проверить локальные изменения и сделать резервную копию. Не запускать `deploy/install.sh` на действующей плате: он предназначен для новой установки. Перезапуск Flask не требует перезапуска GDM/Chromium, но может кратковременно разорвать WebSocket-соединения. Не использовать `exit` в блоках команд, вставляемых в интерактивную SSH-оболочку; для `systemctl` указывать `--no-pager`.
+
+Текущая оптимизация предпросмотра ТВ (Screencast) подготовлена отдельно: [PR #1](https://github.com/AlekseyAnoshko/TeleRepka/pull/1). Она **не установлена на основной плате**, пока не выполнены проверка и контролируемое обновление.
+
 ## Архитектура
 
 ```
