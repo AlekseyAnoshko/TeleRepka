@@ -2,3 +2,16 @@ __pycache__/
 venv/
 certs/
 *.crt
+
+# Python virtual environments and bytecode
+.venv/
+*.py[cod]
+
+# Local backups
+*.before-*
+*.backup-*
+*.pre-commit-*
+
+# Local diagnostic binaries
+tools/*probe
+tools/dht11_wiringrp
