@@ -141,7 +141,11 @@ body.broadcast-active #video-grid {
 .schedule-container h2 { color:var(--accent); font-size:20px; margin:0 0 16px; }
 #employee-search { width:100%; padding:12px; margin-bottom:12px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text); font-size:15px; }
 .schedule-muted { color:var(--muted); font-size:14px; }
-.employee-item { width:100%; display:block; text-align:left; padding:13px 15px; margin:0 0 7px; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:9px; cursor:pointer; }
+.employee-item { width:100%; display:flex; align-items:center; gap:14px; text-align:left; padding:10px 15px; margin:0 0 7px; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:9px; cursor:pointer; }
+.employee-photo { width:64px; height:64px; flex-shrink:0; border-radius:50%; object-fit:cover; object-position:center 20%; background:var(--bg); border:1px solid var(--border); }
+.employee-info { min-width:0; flex:1; }
+.employee-name { display:block; font-weight:600; }
+.employee-avatar-placeholder { width:64px; height:64px; flex-shrink:0; border-radius:50%; background:var(--bg); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:27px; }
 .employee-item:hover,.employee-item:focus-visible { border-color:var(--accent); }
 .employee-item small { display:block; margin-top:5px; color:var(--muted); }
 #schedule-details[hidden],#schedule-directory[hidden] { display:none; }
@@ -280,11 +284,23 @@ socket.on('open-url-on-tv', function (data) {
   if (isTvKiosk && data && data.url) window.location.href = data.url;
 });
 
-document.getElementById('btn-tv-home').addEventListener('click', function () {
+document.getElementById('btn-tv-home').addEventListener('click', function (e) {
+  e.preventDefault();
+
   fetch('/tv/go-home', { method: 'POST' })
     .then(function (r) { return r.json(); })
-    .then(function (data) { if (!data.ok) alert('Не удалось управлять ТВ через CDP. Проверьте, что Repka Pi доступен на порту 9222.'); })
-    .catch(function () { alert('Ошибка запроса.'); });
+    .then(function (data) {
+      if (!data.ok) {
+        alert('Не удалось вернуть дашборд на ТВ.');
+        return;
+      }
+
+      setActiveStageView('control');
+      syncScreencast();
+    })
+    .catch(function () {
+      alert('Ошибка запроса.');
+    });
 });
 
 const tvScreen = document.getElementById('tv-screen');
@@ -595,8 +611,41 @@ socket.on('broadcaster-stop', function ({ sid }) {
     filtered.forEach(function (employee) {
       const button = node('button', 'employee-item');
       button.type = 'button';
-      button.append(node('span', '', employee.name));
-      button.append(node('small', '', employee.schedule_url ? 'Расписание подключено' : 'Расписание пока не подключено'));
+      const photoFiles = {
+        1: '1.jpg',
+        2: '2.jpg',
+        3: '3.jpg',
+        4: '4.jpg',
+        5: '5.jpg',
+        6: '6.jpg',
+        7: '7.jpg',
+        8: '8.png',
+        9: '9.jpg',
+        10: '10.jpg',
+        11: '11.jpg',
+        12: '12.jpg',
+        13: '13.jpg',
+        14: '14.jpg',
+        15: '15.jpg',
+        16: '16.jpg',
+        17: '17.png'
+      };
+      const photoFile = photoFiles[employee.id];
+      const avatar = photoFile
+        ? node('img', 'employee-photo')
+        : node('span', 'employee-avatar-placeholder', '👤');
+      if (photoFile) {
+        avatar.src = '/static/employees/' + photoFile;
+        avatar.alt = '';
+        avatar.loading = 'lazy';
+        avatar.onerror = function () {
+          avatar.replaceWith(node('span', 'employee-avatar-placeholder', '👤'));
+        };
+      }
+      const info = node('span', 'employee-info');
+      info.append(node('span', 'employee-name', employee.name));
+      info.append(node('small', '', employee.schedule_url ? 'Расписание подключено' : 'Расписание пока не подключено'));
+      button.append(avatar, info);
       button.addEventListener('click', function () {
         openSchedule(employee);
         if (!isTvKiosk) socket.emit('tv-schedule-select', {employee_id: employee.id});
