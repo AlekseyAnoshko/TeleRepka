@@ -213,6 +213,33 @@ body.broadcast-active #video-grid {
       <h2>Сотрудники лаборатории</h2>
       <input id="employee-search" type="search" placeholder="Поиск по ФИО" autocomplete="off">
       <p id="employee-count" class="schedule-muted" aria-live="polite">Загрузка сотрудников...</p>
+
+<style id="employee-grid-layout">
+  #employee-list {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    align-items: stretch;
+  }
+
+  #employee-list > * {
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  @media (max-width: 1100px) {
+    #employee-list {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 700px) {
+    #employee-list {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>
       <div id="employee-list"></div>
     </section>
     <section id="schedule-details" hidden>
@@ -628,7 +655,13 @@ socket.on('broadcaster-stop', function ({ sid }) {
         14: '14.jpg',
         15: '15.jpg',
         16: '16.jpg',
-        17: '17.png'
+        17: '17.png',
+        18: '18.jpg',
+        21: '21.jpg',
+        22: '22.jpg',
+        23: '23.jpg',
+        24: '24.jpg',
+        25: '25.jpg'
       };
       const photoFile = photoFiles[employee.id];
       const avatar = photoFile
