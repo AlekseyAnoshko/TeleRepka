@@ -4,6 +4,8 @@ eventlet>=0.36
 requests>=2.31
 websocket-client>=1.7
 pyserial==3.5
+smbus2>=0.4
+RPi.bme280==0.2.4
 # Опционально, для реальных датчиков (закомментировано, если работаете в режиме симуляции):
 # adafruit-circuitpython-dht
 # mh-z19
