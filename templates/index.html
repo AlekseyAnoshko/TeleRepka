@@ -41,9 +41,9 @@ header .clock { color: var(--accent); font-size: 28px; font-variant-numeric: tab
 aside { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
 .panel { padding: 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; }
 .panel h2 { margin: 0 0 12px; color: var(--muted); font-size: 14px; letter-spacing: 0.05em; text-transform: uppercase; }
-.sensor-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.sensor-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .sensor-value { text-align: center; }
-.sensor-value .num { color: var(--accent); font-size: 30px; font-weight: 700; }
+.sensor-value .num { color: var(--accent); font-size: 26px; font-weight: 700; }
 .sensor-value .unit { color: var(--muted); font-size: 13px; }
 .sensor-value .label { margin-top: 4px; color: var(--muted); font-size: 12px; }
 .frame-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 0;
@@ -175,6 +175,7 @@ body.broadcast-active #video-grid {
 <div class="sensor-value"><div class="num" id="s-temp">--</div><div class="unit">&deg;C</div><div class="label">Темп.</div></div>
 <div class="sensor-value"><div class="num" id="s-hum">--</div><div class="unit">%</div><div class="label">Влажн.</div></div>
 <div class="sensor-value"><div class="num" id="s-co2">--</div><div class="unit">ppm</div><div class="label">CO2</div></div>
+<div class="sensor-value"><div class="num" id="s-pressure">--</div><div class="unit">мм рт. ст.</div><div class="label">Давл.</div></div>
 </div>
 </div>
 <div class="panel">
@@ -266,7 +267,8 @@ tick();
 socket.on('sensor_data', function (data) {
   document.getElementById('s-temp').textContent = data.temperature !== null ? data.temperature.toFixed(1) : '--';
   document.getElementById('s-hum').textContent = data.humidity !== null ? data.humidity.toFixed(0) : '--';
-  document.getElementById('s-co2').textContent = data.co2 !== null ? Math.round(data.co2) : '--';
+  document.getElementById('s-co2').textContent = data.co2 != null ? Math.round(data.co2) : '--';
+  document.getElementById('s-pressure').textContent = data.pressure != null ? Math.round(data.pressure) : '--';
 });
 
 socket.on('photoframe_status', function (frames) {

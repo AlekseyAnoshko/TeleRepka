@@ -29,6 +29,13 @@ try:
 except ImportError:
     serial = None  # type: ignore[assignment]
 
+try:
+    import smbus2
+    import bme280
+except ImportError:
+    smbus2 = None
+    bme280 = None
+
 
 LOGGER = logging.getLogger(__name__)
 
@@ -36,6 +43,9 @@ LOGGER = logging.getLogger(__name__)
 DHT11_BOARD_PIN = 33
 MHZ19_PORT = "/dev/ttyS2"
 MHZ19_BAUDRATE = 9600
+BME280_BUS = 1
+BME280_ADDRESS = 0x76
+HPA_TO_MMHG = 0.750061683
 
 # DHT11 нельзя опрашивать чаще одного раза в секунду.
 DHT11_MIN_INTERVAL_SECONDS = 1.2
@@ -288,6 +298,21 @@ def read_mhz19b() -> Optional[int]:
     return (response[2] << 8) | response[3]
 
 
+def read_bme280() -> tuple[Optional[float], Optional[float], Optional[float]]:
+    """Температура °C, влажность %, давление мм рт. ст. (без приведения к уровню моря)."""
+    if smbus2 is None or bme280 is None:
+        LOGGER.warning("BME280: отсутствуют smbus2 или RPi.bme280")
+        return None, None, None
+    try:
+        with smbus2.SMBus(BME280_BUS) as bus:
+            calibration = bme280.load_calibration_params(bus, BME280_ADDRESS)
+            data = bme280.sample(bus, BME280_ADDRESS, calibration)
+        return data.temperature, data.humidity, data.pressure * HPA_TO_MMHG
+    except (OSError, ValueError, RuntimeError) as exc:
+        LOGGER.warning("BME280: ошибка чтения: %s", exc)
+        return None, None, None
+
+
 def read_all() -> dict[str, Optional[float] | Optional[int]]:
     """
     Возвращает все доступные показания в одном словаре.
@@ -299,13 +324,14 @@ def read_all() -> dict[str, Optional[float] | Optional[int]]:
         "co2": 776,
     }
     """
-    temperature, humidity = read_dht11()
+    temperature, humidity, pressure = read_bme280()
     co2 = read_mhz19b()
 
     return {
         "temperature": temperature,
         "humidity": humidity,
         "co2": co2,
+        "pressure": pressure,
     }
 
 
@@ -315,9 +341,10 @@ if __name__ == "__main__":
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    temperature_value, humidity_value = read_dht11()
+    temperature_value, humidity_value, pressure_value = read_bme280()
     co2_value = read_mhz19b()
 
     print(f"Temperature: {temperature_value!r} °C")
     print(f"Humidity: {humidity_value!r} %")
     print(f"CO2: {co2_value!r} ppm")
+    print(f"Pressure: {pressure_value!r} mmHg")
