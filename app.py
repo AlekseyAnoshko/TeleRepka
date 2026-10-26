@@ -458,7 +458,12 @@ class ScreencastSession:
     def add_viewer(self) -> bool:
         with self._lock:
             self._viewers += 1
-        return self._ensure_started()
+        if self._ensure_started():
+            return True
+        # Failed CDP startup must not leave a phantom viewer behind.
+        with self._lock:
+            self._viewers = max(0, self._viewers - 1)
+        return False
 
     def remove_viewer(self):
         with self._lock:
@@ -539,9 +544,15 @@ class ScreencastSession:
                         }))
                     except Exception:
                         break
+        # A previous reader must not reset a newly established CDP session.
         with self._lock:
-            self._running = False
-            self._ws = None
+            if self._ws is ws:
+                self._running = False
+                self._ws = None
+        try:
+            ws.close()
+        except Exception:
+            pass
 
     def send_input(self, method: str, params: dict) -> bool:
         with self._lock:
@@ -573,7 +584,6 @@ def tv_screencast_start():
     if not ok:
         tv_screencast_viewers.discard(sid)
         leave_room("tv-screencast-viewers")
-        _screencast.remove_viewer()
 
     emit("tv-screencast-status", {"ok": ok})
 
